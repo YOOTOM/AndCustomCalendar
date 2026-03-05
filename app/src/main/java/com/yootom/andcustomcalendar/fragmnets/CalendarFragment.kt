@@ -8,6 +8,7 @@ import androidx.fragment.app.Fragment
 import androidx.fragment.app.FragmentActivity
 import androidx.recyclerview.widget.DividerItemDecoration
 import androidx.recyclerview.widget.GridLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.yootom.andcustomcalendar.MainActivity
 import com.yootom.andcustomcalendar.R
 import com.yootom.andcustomcalendar.adapters.MainRecyclerViewAdapter
@@ -17,7 +18,6 @@ import com.yootom.andcustomcalendar.interfaces.OnChangeListener
 import com.yootom.andcustomcalendar.interfaces.OnFragmentCommunicator
 import com.yootom.andcustomcalendar.models.CustomCalendar
 import com.yootom.andcustomcalendar.utils.DatabaseHelper
-import kotlinx.android.synthetic.main.fragment_calendar.view.*
 
 /**
  * viewPager에 그릴 Fragmnet
@@ -52,7 +52,7 @@ class CalendarFragment : Fragment() {
                         result
                     )
                 mainActivity.mainRecyclerViewAdapter.notifyDataSetChanged()
-                view.rv_calendar.apply {
+                view.findViewById<RecyclerView>(R.id.rv_calendar).apply {
                     mainActivity.runOnUiThread {
                         layoutManager = GridLayoutManager(context, CustomCalendar.WEEK)
                         adapter = mainActivity.mainRecyclerViewAdapter

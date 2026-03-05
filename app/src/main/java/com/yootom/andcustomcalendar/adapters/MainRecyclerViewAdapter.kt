@@ -5,6 +5,9 @@ import android.app.AlertDialog
 import android.graphics.Color
 import android.view.LayoutInflater
 import android.view.ViewGroup
+import android.widget.Button
+import android.widget.EditText
+import android.widget.TextView
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.yootom.andcustomcalendar.Helpers.ViewHolderHelper
@@ -15,8 +18,6 @@ import com.yootom.andcustomcalendar.databases.model.TBCalendar
 import com.yootom.andcustomcalendar.interfaces.OnChangeCommunicator
 import com.yootom.andcustomcalendar.models.CustomCalendar
 import com.yootom.andcustomcalendar.utils.DatabaseHelper
-import kotlinx.android.synthetic.main.custom_dialog.view.*
-import kotlinx.android.synthetic.main.item_schedule.*
 
 /**
  * Calendar을 그리고 뿌리기 위한 어답터
@@ -61,12 +62,12 @@ class MainRecyclerViewAdapter(
             holder.layout_click.setOnClickListener {
                 val mDialogView =
                     LayoutInflater.from(mainActivity).inflate(R.layout.custom_dialog, null)
-                mDialogView.txt_title.text =
+                mDialogView.findViewById<TextView>(R.id.txt_title).text =
                     "${getDayOfTheWeek(position)}, ${customCalendar.data[position]} ${mainActivity.getMonthName()}"
                 val mBuilder = AlertDialog.Builder(mainActivity).setView(mDialogView).create()
                 mBuilder.show()
 
-                mDialogView.btn_confirm.setOnClickListener {
+                mDialogView.findViewById<Button>(R.id.btn_confirm).setOnClickListener {
                     DatabaseHelper(
                         mainActivity,
                         mainActivity.appDatabase
@@ -80,7 +81,7 @@ class MainRecyclerViewAdapter(
                         getDayOfTheWeek(position),
                         mainActivity.getMonthName(),
                         customCalendar.data[position].toString(),
-                        mDialogView.edit_text.text.toString()
+                        mDialogView.findViewById<EditText>(R.id.edit_text).text.toString()
                     )
                 }
 

@@ -6,7 +6,6 @@ import androidx.recyclerview.widget.RecyclerView
 import com.yootom.andcustomcalendar.Helpers.ViewHolderHelper
 import com.yootom.andcustomcalendar.R
 import com.yootom.andcustomcalendar.databases.model.TBCalendar
-import kotlinx.android.synthetic.main.item_calendar.*
 
 /**
 * 그려진 Calendar에 일정을 그리기 위한 어답터

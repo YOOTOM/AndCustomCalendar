@@ -3,6 +3,7 @@ package com.yootom.andcustomcalendar
 import androidx.appcompat.app.AppCompatActivity
 import android.os.Bundle
 import android.util.Log
+import android.view.View
 import androidx.viewpager2.widget.ViewPager2
 import com.yootom.andcustomcalendar.adapters.CalendarAdapter
 import com.yootom.andcustomcalendar.adapters.MainRecyclerViewAdapter
@@ -11,7 +12,6 @@ import com.yootom.andcustomcalendar.interfaces.OnChangeListener
 import com.yootom.andcustomcalendar.interfaces.OnFragmentCommunicator
 import com.yootom.andcustomcalendar.interfaces.OnViewPagerChangeListener
 import com.yootom.andcustomcalendar.models.Dates
-import kotlinx.android.synthetic.main.activity_main.*
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -40,19 +40,20 @@ class MainActivity : AppCompatActivity(),
         appDatabase = AppDatabase.getInstance(this)
         calendarAdapter = CalendarAdapter(this)
 
-        calendar.adapter = calendarAdapter
-        calendar.setCurrentItem(CalendarAdapter.START_POS, false)
-        calendar.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
+        val calendarView = findViewById<ViewPager2>(R.id.calendar)
+        calendarView.adapter = calendarAdapter
+        calendarView.setCurrentItem(CalendarAdapter.START_POS, false)
+        calendarView.registerOnPageChangeCallback(object : ViewPager2.OnPageChangeCallback() {
             override fun onPageSelected(position: Int) {
                 super.onPageSelected(position)
             }
         })
 
-        txt_prev_month.setOnClickListener {
+        findViewById<View>(R.id.txt_prev_month).setOnClickListener {
             mainRecyclerViewAdapter.changeToPrevMonth()
         }
 
-        txt_next_month.setOnClickListener {
+        findViewById<View>(R.id.txt_next_month).setOnClickListener {
             mainRecyclerViewAdapter.changeToNextMonth()
         }
     }
@@ -69,7 +70,7 @@ class MainActivity : AppCompatActivity(),
             monthNames[monthNum.format(calendar.time).toInt() - 1]
         )
         runOnUiThread {
-            txt_current_month.text = "${dates.Year} ${dates.Month}"
+            findViewById<android.widget.TextView>(R.id.txt_current_month).text = "${dates.Year} ${dates.Month}"
         }
     }
 

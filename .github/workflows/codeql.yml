@@ -78,6 +78,11 @@ jobs:
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
+      # compileSdkVersion 34에 필요한 SDK 플랫폼 설치
+      - name: Install Android SDK components
+        run: |
+          sdkmanager "platforms;android-34"
+
       # CodeQL 분석 초기화 단계
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
