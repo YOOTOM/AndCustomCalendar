@@ -1,0 +1,14 @@
+name: "CodeQL Config - ATsens Android (internal)"
+
+queries:
+  - uses: security-and-quality
+  - uses: security-extended
+
+paths-ignore:
+  - '**/*Test*.java'
+  - '**/*Test*.kt'
+  - '**/test/**'
+  - '**/androidTest/**'
+  - '**/build/**'
+  - '**/*.gradle'
+  - '**/gradle/**'

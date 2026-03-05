@@ -1,9 +1,9 @@
 # Workflow 이름
 # GitHub Actions 실행 목록에서 보이는 이름
-name: "CodeQL (ATsens Android)"
+name: CodeQL (${{ github.event.repository.name }})
 
 # Workflow 실행 조건
-on:
+on: #이 워크플로우를 실행시키는 이벤트 목록
   # master 브랜치에 코드가 push될 때 실행
   push:
     branches: [ "master" ]
@@ -14,23 +14,33 @@ on:
 
   # GitHub Actions UI에서 수동 실행 가능
   workflow_dispatch:
+    inputs:
+      profile:
+        description: "internal | approval"
+        required: true
+        default: "internal"
 
   # cron 스케줄 실행 (매주 화요일 14:29 UTC)
+  # 분  시  일  월  요일
   schedule:
     - cron: '29 14 * * 2'
 
 jobs:
   analyze:
     # Job 이름 (Actions UI에서 표시)
-    name: Analyze (java-kotlin)
+    name: Static Code Analysis
 
     # 실행 환경 (GitHub에서 제공하는 Ubuntu runner 사용)
+    # GitHub가 제공하는 Ubuntu Linux 서버에서 Job 실행
+    # 보통 쓰는 서버
     runs-on: ubuntu-latest
 
     # 타임아웃 설정 (최대 30분 실행 후 중단)
+    # 권장 타임
     timeout-minutes: 30
 
     # Workflow가 GitHub API에 접근할 때 필요한 권한
+    # CodeQL workflow에서는 많이 사용하는 최소 권한(minimum permissions) 패턴
     permissions:
       # repository 코드 읽기 권한
       contents: read
@@ -44,6 +54,7 @@ jobs:
       # CodeQL 분석 결과(SARIF)를 GitHub Security 대시보드에 업로드하기 위한 권한
       security-events: write
 
+    # GitHub Actions의 “Matrix 전략” 설정
     strategy:
       # 여러 언어 분석 시 하나 실패해도 나머지 계속 진행
       fail-fast: false
@@ -62,6 +73,21 @@ jobs:
       # GitHub repository 코드를 runner 환경으로 가져옴
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Resolve profile
+        id: profile
+        shell: bash
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "value=${{ inputs.profile }}" >> $GITHUB_OUTPUT
+          else
+            echo "value=internal" >> $GITHUB_OUTPUT
+          fi
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.profile }}" = "approval" ]; then
+            echo "hide_rule_id=true" >> $GITHUB_OUTPUT
+          else
+            echo "hide_rule_id=false" >> $GITHUB_OUTPUT
+          fi
 
       # Android/Gradle 프로젝트 빌드를 위한 JDK 설치
       - name: Set up JDK 17
@@ -91,7 +117,7 @@ jobs:
         with:
           languages: ${{ matrix.language }}
           build-mode: ${{ matrix.build-mode }}
-          config-file: ./.github/codeql/codeql-config.yml
+          config-file: ./.github/codeql/codeql-config-${{ steps.profile.outputs.value }}.yml
 
       # manual 빌드 모드일 경우 실행되는 빌드 단계
       - name: Build (Gradle)
@@ -100,12 +126,10 @@ jobs:
         run: |
           # gradlew 실행 권한 부여
           chmod +x ./gradlew
-
           # Android 프로젝트 빌드
           # assembleDebug는 APK 빌드 단계
           # build 또는 test로 변경 가능
           ./gradlew clean assembleDebug --no-daemon
-
       # CodeQL 분석 실행 단계
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
@@ -142,8 +166,10 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           SARIF_FILE=$(find sarif-results -name "*.sarif" -type f 2>/dev/null | head -1)
           if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
+            HIDE_RULE_ID="${{ steps.profile.outputs.hide_rule_id }}"
             python3 << 'PYEOF' >> $GITHUB_STEP_SUMMARY
           import json, os, sys
+          hide_rule_id = os.environ.get("HIDE_RULE_ID", "false").lower() == "true"
           sarif_path = os.popen("find sarif-results -name '*.sarif' -type f | head -1").read().strip()
           if not sarif_path:
               sys.exit(0)
@@ -159,7 +185,8 @@ jobs:
                   lv = res.get('level', 'none')
                   sev[lv] = sev.get(lv, 0) + 1
                   rid = res.get('ruleId', '?')
-                  rules[rid] = rules.get(rid, 0) + 1
+                  if not hide_rule_id:
+                      rules[rid] = rules.get(rid, 0) + 1
                   for loc in res.get('locations', []):
                       u = loc.get('physicalLocation', {}).get('artifactLocation', {}).get('uri', '')
                       if u: files[u] = files.get(u, 0) + 1
@@ -168,8 +195,9 @@ jobs:
                       if t.startswith('external/cwe/cwe-'):
                           cwes.add(t.replace('external/cwe/', '').upper())
           tot = sum(sev.values())
+          unique_rules = len({res.get('ruleId', '?') for run in data.get('runs', []) for res in run.get('results', [])}) if hide_rule_id else len(rules)
           print(f'### Summary')
-          print(f'> **{tot}** findings | **{len(files)}** files | **{len(rules)}** rules | **{len(cwes)}** CWEs')
+          print(f'> **{tot}** findings | **{len(files)}** files | **{unique_rules}** rules | **{len(cwes)}** CWEs')
           print()
           print('| Severity | Count | % |')
           print('|----------|-------|---|')
@@ -179,7 +207,7 @@ jobs:
               print(f'| {lv.upper()} | {c} | {p:.1f}% |')
           print(f'| **Total** | **{tot}** | |')
           print()
-          if rules:
+          if (not hide_rule_id) and rules:
               print('### Rules (Top 20)')
               print('| # | Rule | Count |')
               print('|---|------|-------|')
@@ -205,3 +233,5 @@ jobs:
           else
             echo "No SARIF results found." >> $GITHUB_STEP_SUMMARY
           fi
+        env:
+          HIDE_RULE_ID: ${{ steps.profile.outputs.hide_rule_id }}
