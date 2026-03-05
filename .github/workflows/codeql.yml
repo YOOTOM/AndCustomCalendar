@@ -1,6 +1,6 @@
 # Workflow 이름
 # GitHub Actions 실행 목록에서 보이는 이름
-name: CodeQL (${{ github.event.repository.name }})
+name: CodeQL (ATsens Android)
 
 # Workflow 실행 조건
 on: #이 워크플로우를 실행시키는 이벤트 목록
