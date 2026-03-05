@@ -1,21 +1,79 @@
 <?xml version="1.0" encoding="utf-8"?>
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
 
+    <!-- [CWE-276] 과도한 권한 요청 -->
+    <uses-permission android:name="android.permission.INTERNET" />
+    <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+    <uses-permission android:name="android.permission.READ_CONTACTS" />
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <uses-permission android:name="android.permission.READ_PHONE_STATE" />
+
     <application
         android:allowBackup="true"
         android:icon="@mipmap/ic_launcher"
         android:label="@string/app_name"
         android:roundIcon="@mipmap/ic_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/AppTheme">
+        android:theme="@style/AppTheme"
+        android:usesCleartextTraffic="true"
+        android:debuggable="true">
+
+        <!-- 메인 액티비티 -->
         <activity android:name=".MainActivity"
             android:exported="true">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
-
                 <category android:name="android.intent.category.LAUNCHER" />
             </intent-filter>
+
+            <!-- [CWE-939] 검증 없는 Deep Link 핸들러 -->
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="http"
+                    android:host="calendar.yootom.com"
+                    android:pathPrefix="/action" />
+            </intent-filter>
+            <intent-filter>
+                <action android:name="android.intent.action.VIEW" />
+                <category android:name="android.intent.category.DEFAULT" />
+                <category android:name="android.intent.category.BROWSABLE" />
+                <data
+                    android:scheme="calendar"
+                    android:host="open" />
+            </intent-filter>
         </activity>
+
+        <!-- [CWE-926] Exported Receiver without permission -->
+        <receiver
+            android:name=".receivers.CalendarEventReceiver"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.yootom.CALENDAR_EVENT" />
+            </intent-filter>
+        </receiver>
+
+        <!-- [CWE-926] Exported Provider without permission -->
+        <provider
+            android:name=".providers.CalendarContentProvider"
+            android:authorities="com.yootom.andcustomcalendar.provider"
+            android:exported="true"
+            android:grantUriPermissions="true" />
+
+        <!-- [CWE-926] Exported Service without permission -->
+        <service
+            android:name=".services.CalendarSyncService"
+            android:exported="true">
+            <intent-filter>
+                <action android:name="com.yootom.SYNC_CALENDAR" />
+            </intent-filter>
+        </service>
+
     </application>
 
 </manifest>
