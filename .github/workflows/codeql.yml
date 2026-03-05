@@ -1,4 +1,4 @@
-name: "CodeQL (${{ github.repository }})"
+name: "CodeQL (ATsens Android)"
 
 on:
   push:
