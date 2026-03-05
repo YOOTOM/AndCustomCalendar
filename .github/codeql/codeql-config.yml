@@ -1,0 +1,17 @@
+name: "CodeQL Config - ATsens Android"
+
+# 쿼리팩 설정: 최대한 많은 규칙 적용
+queries:
+  - uses: security-and-quality
+  - uses: security-extended
+
+# 분석 제외 경로 (테스트 코드, 빌드 산출물 등)
+paths-ignore:
+  - '**/*Test*.java'
+  - '**/*Test*.kt'
+  - '**/test/**'
+  - '**/androidTest/**'
+  - '**/build/**'
+  - '**/*.gradle'
+  - '**/gradle/**'
+

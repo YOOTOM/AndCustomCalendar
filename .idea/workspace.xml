@@ -10,16 +10,9 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="95fd4d7a-d94e-4c2a-b7ac-2c91614a6e2f" name="Default Changelist" comment="">
-      <change afterPath="$PROJECT_DIR$/app/src/main/java/com/yootom/andcustomcalendar/providers/CalendarContentProvider.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/src/main/java/com/yootom/andcustomcalendar/receivers/CalendarEventReceiver.kt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/src/main/java/com/yootom/andcustomcalendar/services/CalendarSyncService.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/src/main/java/com/yootom/andcustomcalendar/utils/VulnerableAndroidHelper.kt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/src/main/java/com/yootom/andcustomcalendar/utils/VulnerableFileHelper.kt" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/src/main/java/com/yootom/andcustomcalendar/utils/VulnerableJavaHelper.java" afterDir="false" />
-      <change afterPath="$PROJECT_DIR$/app/src/main/java/com/yootom/andcustomcalendar/utils/VulnerableNetworkHelper.kt" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/.gradle/buildOutputCleanup/buildOutputCleanup.lock" beforeDir="false" afterPath="$PROJECT_DIR$/.gradle/buildOutputCleanup/buildOutputCleanup.lock" afterDir="false" />
+      <change afterPath="$PROJECT_DIR$/.github/codeql/codeql-config.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.github/workflows/codeql.yml" beforeDir="false" afterPath="$PROJECT_DIR$/.github/workflows/codeql.yml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
-      <change beforePath="$PROJECT_DIR$/app/src/main/AndroidManifest.xml" beforeDir="false" afterPath="$PROJECT_DIR$/app/src/main/AndroidManifest.xml" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />

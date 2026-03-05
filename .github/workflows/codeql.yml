@@ -27,6 +27,9 @@ jobs:
     # 실행 환경 (GitHub에서 제공하는 Ubuntu runner 사용)
     runs-on: ubuntu-latest
 
+    # 타임아웃 설정 (최대 30분 실행 후 중단)
+    timeout-minutes: 30
+
     # Workflow가 GitHub API에 접근할 때 필요한 권한
     permissions:
       # repository 코드 읽기 권한
@@ -80,23 +83,15 @@ jobs:
 
       # compileSdkVersion 34에 필요한 SDK 플랫폼 설치
       - name: Install Android SDK components
-        run: |
-          sdkmanager "platforms;android-34"
+        run: sdkmanager "platforms;android-34"
 
       # CodeQL 분석 초기화 단계
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
-          # 분석할 언어
           languages: ${{ matrix.language }}
-
-          # build-mode 설정 (manual / autobuild)
           build-mode: ${{ matrix.build-mode }}
-
-          # 사용할 CodeQL query pack 설정
-          # security-extended 또는 security-and-quality를 추가하면
-          # 더 많은 보안 및 품질 규칙을 적용할 수 있음
-          # queries: security-extended,security-and-quality
+          config-file: ./.github/codeql/codeql-config.yml
 
       # manual 빌드 모드일 경우 실행되는 빌드 단계
       - name: Build (Gradle)
@@ -105,9 +100,6 @@ jobs:
         run: |
           # gradlew 실행 권한 부여
           chmod +x ./gradlew
-
-          # Gradle 버전 확인
-          ./gradlew --version
 
           # Android 프로젝트 빌드
           # assembleDebug는 APK 빌드 단계
@@ -121,3 +113,95 @@ jobs:
           # 언어별 결과 카테고리
           # GitHub Security → Code scanning에서 구분용으로 사용됨
           category: "/language:${{ matrix.language }}"
+
+          # SARIF 결과 파일을 지정된 경로에 저장
+          output: sarif-results
+
+      # SARIF 파일을 Artifact로 업로드 → 다운로드 가능
+      - name: Upload SARIF as Artifact
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: codeql-sarif-${{ matrix.language }}
+          path: sarif-results/**/*.sarif
+          retention-days: 30
+
+      # 분석 결과 요약을 Actions Summary에 출력
+      - name: Generate Analysis Summary
+        if: always()
+        shell: bash
+        run: |
+          echo "## CodeQL Analysis Report" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
+          echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Language | ${{ matrix.language }} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Query Pack | security-and-quality |" >> $GITHUB_STEP_SUMMARY
+          echo "| Branch | ${GITHUB_REF_NAME} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Commit | ${GITHUB_SHA::8} |" >> $GITHUB_STEP_SUMMARY
+          echo "" >> $GITHUB_STEP_SUMMARY
+          SARIF_FILE=$(find sarif-results -name "*.sarif" -type f 2>/dev/null | head -1)
+          if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
+            python3 << 'PYEOF' >> $GITHUB_STEP_SUMMARY
+          import json, os, sys
+          sarif_path = os.popen("find sarif-results -name '*.sarif' -type f | head -1").read().strip()
+          if not sarif_path:
+              sys.exit(0)
+          with open(sarif_path) as f:
+              data = json.load(f)
+          sev = {'error': 0, 'warning': 0, 'note': 0, 'none': 0}
+          rules = {}
+          cwes = set()
+          files = {}
+          for run in data.get('runs', []):
+              tr = {r['id']: r for r in run.get('tool', {}).get('driver', {}).get('rules', [])}
+              for res in run.get('results', []):
+                  lv = res.get('level', 'none')
+                  sev[lv] = sev.get(lv, 0) + 1
+                  rid = res.get('ruleId', '?')
+                  rules[rid] = rules.get(rid, 0) + 1
+                  for loc in res.get('locations', []):
+                      u = loc.get('physicalLocation', {}).get('artifactLocation', {}).get('uri', '')
+                      if u: files[u] = files.get(u, 0) + 1
+                  ri = tr.get(rid, {})
+                  for t in ri.get('properties', {}).get('tags', []):
+                      if t.startswith('external/cwe/cwe-'):
+                          cwes.add(t.replace('external/cwe/', '').upper())
+          tot = sum(sev.values())
+          print(f'### Summary')
+          print(f'> **{tot}** findings | **{len(files)}** files | **{len(rules)}** rules | **{len(cwes)}** CWEs')
+          print()
+          print('| Severity | Count | % |')
+          print('|----------|-------|---|')
+          for lv in ['error','warning','note','none']:
+              c = sev.get(lv, 0)
+              p = c/tot*100 if tot else 0
+              print(f'| {lv.upper()} | {c} | {p:.1f}% |')
+          print(f'| **Total** | **{tot}** | |')
+          print()
+          if rules:
+              print('### Rules (Top 20)')
+              print('| # | Rule | Count |')
+              print('|---|------|-------|')
+              for i,(r,c) in enumerate(sorted(rules.items(), key=lambda x:-x[1])[:20],1):
+                  print(f'| {i} | `{r}` | {c} |')
+              print()
+          if cwes:
+              print(f'### CWEs ({len(cwes)})')
+              for c in sorted(cwes):
+                  n = c.replace('CWE-','')
+                  print(f'- [{c}](https://cwe.mitre.org/data/definitions/{n}.html)')
+              print()
+          if files:
+              print('### Top Files')
+              print('| # | File | Count |')
+              print('|---|------|-------|')
+              for i,(f,c) in enumerate(sorted(files.items(), key=lambda x:-x[1])[:10],1):
+                  s = f.split('/')[-1]
+                  print(f'| {i} | `{s}` | {c} |')
+          PYEOF
+            echo "---" >> $GITHUB_STEP_SUMMARY
+            echo "[Code Scanning](/${{ github.repository }}/security/code-scanning) | SARIF in Artifacts tab" >> $GITHUB_STEP_SUMMARY
+          else
+            echo "No SARIF results found." >> $GITHUB_STEP_SUMMARY
+          fi
