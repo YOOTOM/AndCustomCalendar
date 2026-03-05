@@ -1,76 +1,41 @@
-# Workflow 이름
-# GitHub Actions 실행 목록에서 보이는 이름
-name: CodeQL (${{ github.event.repository.name }})
+name: "CodeQL (${{ github.repository }})"
 
-# Workflow 실행 조건
-on: #이 워크플로우를 실행시키는 이벤트 목록
-  # master 브랜치에 코드가 push될 때 실행
+on:
   push:
     branches: [ "master" ]
-
-  # master 브랜치 대상으로 PR 생성/업데이트될 때 실행
   pull_request:
     branches: [ "master" ]
-
-  # GitHub Actions UI에서 수동 실행 가능
   workflow_dispatch:
     inputs:
       profile:
         description: "internal | approval"
         required: true
-        default: "internal"
-
-  # cron 스케줄 실행 (매주 화요일 14:29 UTC)
-  # 분  시  일  월  요일
+        default: "approval"
   schedule:
     - cron: '29 14 * * 2'
 
 jobs:
   analyze:
-    # Job 이름 (Actions UI에서 표시)
     name: Static Code Analysis
-
-    # 실행 환경 (GitHub에서 제공하는 Ubuntu runner 사용)
-    # GitHub가 제공하는 Ubuntu Linux 서버에서 Job 실행
-    # 보통 쓰는 서버
     runs-on: ubuntu-latest
-
-    # 타임아웃 설정 (최대 30분 실행 후 중단)
-    # 권장 타임
     timeout-minutes: 30
 
-    # Workflow가 GitHub API에 접근할 때 필요한 권한
-    # CodeQL workflow에서는 많이 사용하는 최소 권한(minimum permissions) 패턴
     permissions:
-      # repository 코드 읽기 권한
       contents: read
-
-      # Actions metadata 접근 권한
       actions: read
-
-      # CodeQL query pack 또는 패키지 접근 권한
       packages: read
-
-      # CodeQL 분석 결과(SARIF)를 GitHub Security 대시보드에 업로드하기 위한 권한
       security-events: write
+      pages: write
+      id-token: write
 
-    # GitHub Actions의 “Matrix 전략” 설정
     strategy:
-      # 여러 언어 분석 시 하나 실패해도 나머지 계속 진행
       fail-fast: false
-
-      # 분석 대상 언어 및 빌드 방식 정의
       matrix:
         include:
-          # Java + Kotlin 코드 분석
           - language: java-kotlin
-
-            # 빌드 모드
-            # manual: 사용자가 직접 빌드 명령 실행
             build-mode: manual
 
     steps:
-      # GitHub repository 코드를 runner 환경으로 가져옴
       - name: Checkout repository
         uses: actions/checkout@v4
 
@@ -89,29 +54,19 @@ jobs:
             echo "hide_rule_id=false" >> $GITHUB_OUTPUT
           fi
 
-      # Android/Gradle 프로젝트 빌드를 위한 JDK 설치
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
-          # OpenJDK 배포판
           distribution: temurin
-
-          # 사용할 Java 버전
           java-version: "17"
-
-          # Gradle dependency 캐싱 (빌드 속도 향상)
           cache: gradle
 
-      # Android SDK 설치
-      # Gradle 빌드 중 Android SDK가 필요한 경우 대비
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      # compileSdkVersion 34에 필요한 SDK 플랫폼 설치
       - name: Install Android SDK components
         run: sdkmanager "platforms;android-34"
 
-      # CodeQL 분석 초기화 단계
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
@@ -119,29 +74,190 @@ jobs:
           build-mode: ${{ matrix.build-mode }}
           config-file: ./.github/codeql/codeql-config-${{ steps.profile.outputs.value }}.yml
 
-      # manual 빌드 모드일 경우 실행되는 빌드 단계
       - name: Build (Gradle)
         if: matrix.build-mode == 'manual'
         shell: bash
         run: |
-          # gradlew 실행 권한 부여
           chmod +x ./gradlew
-          # Android 프로젝트 빌드
-          # assembleDebug는 APK 빌드 단계
-          # build 또는 test로 변경 가능
           ./gradlew clean assembleDebug --no-daemon
-      # CodeQL 분석 실행 단계
+
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
-          # 언어별 결과 카테고리
-          # GitHub Security → Code scanning에서 구분용으로 사용됨
           category: "/language:${{ matrix.language }}"
-
-          # SARIF 결과 파일을 지정된 경로에 저장
           output: sarif-results
 
-      # SARIF 파일을 Artifact로 업로드 → 다운로드 가능
+      - name: Generate Approval Dashboard (HTML, No Rule/Query IDs)
+        if: steps.profile.outputs.value == 'approval'
+        shell: bash
+        run: |
+          mkdir -p site
+          SARIF_FILE=$(find sarif-results -name "*.sarif" -type f 2>/dev/null | head -1)
+          if [ -z "$SARIF_FILE" ]; then
+            echo "<h1>No SARIF results found.</h1>" > site/index.html
+            exit 0
+          fi
+
+          python3 << 'PY'
+          import json, os, html, datetime
+
+          sarif_path = os.popen("find sarif-results -name '*.sarif' -type f | head -1").read().strip()
+          data = json.load(open(sarif_path, encoding="utf-8"))
+
+          repo = os.environ.get("GITHUB_REPOSITORY", "")
+          ref  = os.environ.get("GITHUB_REF_NAME", "")
+          sha  = os.environ.get("GITHUB_SHA", "")[:8]
+          now  = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
+
+          def sev_norm(level):
+              level = (level or "").lower()
+              if level == "error": return "Critical"
+              if level == "warning": return "High"
+              if level == "note": return "Medium"
+              return "Low"
+
+          def get_first_location(res):
+              locs = res.get("locations") or []
+              if not locs: return ("", "")
+              pl = (locs[0].get("physicalLocation") or {})
+              f = (pl.get("artifactLocation") or {}).get("uri", "") or ""
+              line = ""
+              region = pl.get("region") or {}
+              if region.get("startLine"):
+                  line = str(region["startLine"])
+              return (f, line)
+
+          items = []
+          for run in data.get("runs", []):
+              rules_by_id = {r.get("id"): r for r in run.get("tool", {}).get("driver", {}).get("rules", []) if isinstance(r, dict)}
+              for res in run.get("results", []):
+                  title = ((res.get("message") or {}).get("text") or "(no title)").splitlines()[0].strip()
+                  sev = sev_norm(res.get("level", "none"))
+                  f, line = get_first_location(res)
+                  rid = res.get("ruleId")
+                  rule = rules_by_id.get(rid, {}) if rid else {}
+                  desc = ((rule.get("shortDescription") or {}).get("text") or "")
+                  help_md = ((rule.get("help") or {}).get("markdown") or (rule.get("help") or {}).get("text") or "")
+                  items.append({
+                      "title": title,
+                      "sev": sev,
+                      "file": f,
+                      "line": line,
+                      "desc": desc,
+                      "help": help_md,
+                  })
+
+          order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
+          items.sort(key=lambda x: (order.get(x["sev"], 9), x["file"], x["line"]))
+
+          counts = {}
+          for it in items:
+              counts[it["sev"]] = counts.get(it["sev"], 0) + 1
+
+          def esc(s): return html.escape(s or "")
+
+          css = """
+          body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;line-height:1.5}
+          h1{margin:0 0 8px 0}
+          .meta{color:#666;margin-bottom:16px}
+          .badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;margin-right:6px;border:1px solid #ddd}
+          .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0 18px}
+          .card{border:1px solid #e5e5e5;border-radius:12px;padding:12px}
+          .k{color:#666;font-size:12px}
+          .v{font-size:20px;font-weight:700}
+          .tbl{width:100%;border-collapse:collapse;margin-top:10px}
+          .tbl th,.tbl td{border-bottom:1px solid #eee;padding:10px;vertical-align:top;text-align:left}
+          .small{color:#666;font-size:12px}
+          .hr{height:1px;background:#eee;margin:18px 0}
+          """
+
+          def badge(sev):
+              return f'<span class="badge">{esc(sev)}</span>'
+
+          rows = []
+          for i, it in enumerate(items, 1):
+              loc = it["file"] + (f":{it['line']}" if it["line"] else "")
+              rec = it["help"].strip()
+              if len(rec) > 1200:
+                  rec = rec[:1200] + "\n\n…(truncated)…"
+              rows.append(f"""
+          <tr>
+          <td class="small">{i}</td>
+          <td>{badge(it["sev"])}<b>{esc(it["title"])}</b><div class="small">{esc(it["desc"])}</div></td>
+          <td><code>{esc(loc) if loc else "(not available)"}</code></td>
+          <td>{('<pre style="white-space:pre-wrap;margin:0">'+esc(rec)+'</pre>') if rec else '<span class="small">(No recommendation text)</span>'}</td>
+          </tr>
+          """)
+
+          html_out = f"""<!doctype html>
+          <html lang="en">
+          <head>
+          <meta charset="utf-8"/>
+          <meta name="viewport" content="width=device-width, initial-scale=1"/>
+          <title>CodeQL Approval Dashboard</title>
+          <style>{css}</style>
+          </head>
+          <body>
+          <h1>CodeQL Security Assessment (Approval Dashboard)</h1>
+          <div class="meta">
+          Repository: <code>{esc(repo)}</code> &nbsp;|&nbsp;
+          Branch: <code>{esc(ref)}</code> &nbsp;|&nbsp;
+          Commit: <code>{esc(sha)}</code> &nbsp;|&nbsp;
+          Generated: {esc(now)}
+          </div>
+
+          <div class="card">
+          <b>Note</b>
+          <div class="small">This dashboard is generated from CodeQL SARIF results. Rule IDs / Query IDs are intentionally not shown for regulatory submission.</div>
+          </div>
+
+          <div class="grid">
+          <div class="card"><div class="k">Total findings</div><div class="v">{len(items)}</div></div>
+          <div class="card"><div class="k">Critical</div><div class="v">{counts.get("Critical",0)}</div></div>
+          <div class="card"><div class="k">High</div><div class="v">{counts.get("High",0)}</div></div>
+          <div class="card"><div class="k">Medium</div><div class="v">{counts.get("Medium",0)}</div></div>
+          </div>
+
+          <div class="hr"></div>
+
+          <h2>Findings</h2>
+          <table class="tbl">
+          <thead>
+          <tr>
+          <th style="width:48px">#</th>
+          <th>Issue</th>
+          <th style="width:260px">Location</th>
+          <th>Recommendation</th>
+          </tr>
+          </thead>
+          <tbody>
+          {''.join(rows) if rows else '<tr><td colspan="4">No findings were detected.</td></tr>'}
+          </tbody>
+          </table>
+
+          </body>
+          </html>
+          """
+
+          open("site/index.html", "w", encoding="utf-8").write(html_out)
+          print("Generated site/index.html")
+          PY
+
+      - name: Configure Pages
+        if: steps.profile.outputs.value == 'approval'
+        uses: actions/configure-pages@v5
+
+      - name: Upload Pages artifact
+        if: steps.profile.outputs.value == 'approval'
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Deploy to GitHub Pages
+        if: steps.profile.outputs.value == 'approval'
+        id: deployment
+        uses: actions/deploy-pages@v4
+
       - name: Upload SARIF as Artifact
         uses: actions/upload-artifact@v4
         if: always()
@@ -150,10 +266,11 @@ jobs:
           path: sarif-results/**/*.sarif
           retention-days: 30
 
-      # 분석 결과 요약을 Actions Summary에 출력
       - name: Generate Analysis Summary
         if: always()
         shell: bash
+        env:
+          HIDE_RULE_ID: ${{ steps.profile.outputs.hide_rule_id }}
         run: |
           echo "## CodeQL Analysis Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
@@ -166,7 +283,6 @@ jobs:
           echo "" >> $GITHUB_STEP_SUMMARY
           SARIF_FILE=$(find sarif-results -name "*.sarif" -type f 2>/dev/null | head -1)
           if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
-            HIDE_RULE_ID="${{ steps.profile.outputs.hide_rule_id }}"
             python3 << 'PYEOF' >> $GITHUB_STEP_SUMMARY
           import json, os, sys
           hide_rule_id = os.environ.get("HIDE_RULE_ID", "false").lower() == "true"
@@ -233,5 +349,4 @@ jobs:
           else
             echo "No SARIF results found." >> $GITHUB_STEP_SUMMARY
           fi
-        env:
-          HIDE_RULE_ID: ${{ steps.profile.outputs.hide_rule_id }}
+
