@@ -1,0 +1,118 @@
+# Workflow 이름
+# GitHub Actions 실행 목록에서 보이는 이름
+name: "CodeQL (ATsens Android)"
+
+# Workflow 실행 조건
+on:
+  # master 브랜치에 코드가 push될 때 실행
+  push:
+    branches: [ "master" ]
+
+  # master 브랜치 대상으로 PR 생성/업데이트될 때 실행
+  pull_request:
+    branches: [ "master" ]
+
+  # GitHub Actions UI에서 수동 실행 가능
+  workflow_dispatch:
+
+  # cron 스케줄 실행 (매주 화요일 14:29 UTC)
+  schedule:
+    - cron: '29 14 * * 2'
+
+jobs:
+  analyze:
+    # Job 이름 (Actions UI에서 표시)
+    name: Analyze (java-kotlin)
+
+    # 실행 환경 (GitHub에서 제공하는 Ubuntu runner 사용)
+    runs-on: ubuntu-latest
+
+    # Workflow가 GitHub API에 접근할 때 필요한 권한
+    permissions:
+      # repository 코드 읽기 권한
+      contents: read
+
+      # Actions metadata 접근 권한
+      actions: read
+
+      # CodeQL query pack 또는 패키지 접근 권한
+      packages: read
+
+      # CodeQL 분석 결과(SARIF)를 GitHub Security 대시보드에 업로드하기 위한 권한
+      security-events: write
+
+    strategy:
+      # 여러 언어 분석 시 하나 실패해도 나머지 계속 진행
+      fail-fast: false
+
+      # 분석 대상 언어 및 빌드 방식 정의
+      matrix:
+        include:
+          # Java + Kotlin 코드 분석
+          - language: java-kotlin
+
+            # 빌드 모드
+            # manual: 사용자가 직접 빌드 명령 실행
+            build-mode: manual
+
+    steps:
+      # GitHub repository 코드를 runner 환경으로 가져옴
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      # Android/Gradle 프로젝트 빌드를 위한 JDK 설치
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          # OpenJDK 배포판
+          distribution: temurin
+
+          # 사용할 Java 버전
+          java-version: "17"
+
+          # Gradle dependency 캐싱 (빌드 속도 향상)
+          cache: gradle
+
+      # Android SDK 설치
+      # Gradle 빌드 중 Android SDK가 필요한 경우 대비
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      # CodeQL 분석 초기화 단계
+      - name: Initialize CodeQL
+        uses: github/codeql-action/init@v4
+        with:
+          # 분석할 언어
+          languages: ${{ matrix.language }}
+
+          # build-mode 설정 (manual / autobuild)
+          build-mode: ${{ matrix.build-mode }}
+
+          # 사용할 CodeQL query pack 설정
+          # security-extended 또는 security-and-quality를 추가하면
+          # 더 많은 보안 및 품질 규칙을 적용할 수 있음
+          # queries: security-extended,security-and-quality
+
+      # manual 빌드 모드일 경우 실행되는 빌드 단계
+      - name: Build (Gradle)
+        if: matrix.build-mode == 'manual'
+        shell: bash
+        run: |
+          # gradlew 실행 권한 부여
+          chmod +x ./gradlew
+
+          # Gradle 버전 확인
+          ./gradlew --version
+
+          # Android 프로젝트 빌드
+          # assembleDebug는 APK 빌드 단계
+          # build 또는 test로 변경 가능
+          ./gradlew clean assembleDebug --no-daemon
+
+      # CodeQL 분석 실행 단계
+      - name: Perform CodeQL Analysis
+        uses: github/codeql-action/analyze@v4
+        with:
+          # 언어별 결과 카테고리
+          # GitHub Security → Code scanning에서 구분용으로 사용됨
+          category: "/language:${{ matrix.language }}"
