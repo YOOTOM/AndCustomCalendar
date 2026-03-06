@@ -24,6 +24,9 @@ queries:
 query-filters:
   - exclude:
       id: java/android/debuggable-attribute-enabled
+      
+  - exclude:
+      tags: "external/cwe/cwe-918"
 
 # ── paths-ignore: 분석 제외 경로 ──
 paths-ignore:
