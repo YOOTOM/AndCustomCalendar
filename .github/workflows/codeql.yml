@@ -124,9 +124,42 @@ jobs:
           with open(sarif_path) as f:
               data = json.load(f)
           for run in data.get("runs", []):
-              rids = sorted(set(r.get("ruleId", "(none)") for r in run.get("results", [])))
-              print(f"[Debug] Rule IDs in SARIF ({len(rids)}): {rids}")
-              print(f"[Debug] Total results: {len(run.get('results', []))}")
+              # result 요약
+              results = run.get("results", [])
+              rids = sorted(set(r.get("ruleId", "(none)") for r in results))
+              print(f"[Debug] Total results: {len(results)}")
+              print(f"[Debug] Unique Rule IDs ({len(rids)}): {rids}")
+
+              # driver.rules 확인
+              driver_rules = run.get("tool", {}).get("driver", {}).get("rules", [])
+              driver_ids = [r.get("id","?") for r in driver_rules]
+              print(f"[Debug] driver.rules count: {len(driver_rules)}")
+              if driver_rules:
+                  sample = driver_rules[0]
+                  print(f"[Debug] driver.rules[0] keys: {list(sample.keys())}")
+                  print(f"[Debug] driver.rules[0].id: {sample.get('id')}")
+                  print(f"[Debug] driver.rules[0].properties keys: {list(sample.get('properties',{}).keys())}")
+
+              # extensions 확인
+              extensions = run.get("tool", {}).get("extensions", [])
+              print(f"[Debug] extensions count: {len(extensions)}")
+              for i, ext in enumerate(extensions):
+                  ext_rules = ext.get("rules", [])
+                  ext_ids = [r.get("id","?") for r in ext_rules[:5]]
+                  print(f"[Debug] extensions[{i}].name: {ext.get('name')} | rules: {len(ext_rules)} | sample ids: {ext_ids}")
+                  if ext_rules:
+                      sample = ext_rules[0]
+                      print(f"[Debug]   rules[0] keys: {list(sample.keys())}")
+                      print(f"[Debug]   rules[0].properties keys: {list(sample.get('properties',{}).keys())}")
+
+              # result에 ruleIndex가 있는지 확인
+              if results:
+                  sample_res = results[0]
+                  print(f"[Debug] results[0] keys: {list(sample_res.keys())}")
+                  print(f"[Debug] results[0].ruleId: {sample_res.get('ruleId')}")
+                  print(f"[Debug] results[0].ruleIndex: {sample_res.get('ruleIndex')}")
+                  print(f"[Debug] results[0].rule: {sample_res.get('rule')}")
+                  print(f"[Debug] results[0].level: {sample_res.get('level')}")
           PYEOF
 
       # 현재 profile/category 기준 결과를 Code Scanning에 반영
@@ -231,16 +264,47 @@ jobs:
           rules, cwes, files = {}, set(), {}
 
           for run in data.get('runs', []):
-              driver_rules = run.get('tool', {}).get('driver', {}).get('rules', [])
+              # ── rule 사전 구성 ──
+              # 방법 1: ruleId → rule 매핑 (driver + extensions)
               tr = {}
+              driver_rules = run.get('tool', {}).get('driver', {}).get('rules', [])
               for r in driver_rules:
-                  rid_key = r.get('id')
-                  if rid_key:
-                      tr[rid_key] = r
+                  if r.get('id'): tr[r['id']] = r
+              extensions = run.get('tool', {}).get('extensions', [])
+              for ext in extensions:
+                  for r in ext.get('rules', []):
+                      if r.get('id'): tr[r['id']] = r
+
+              # 방법 2: toolComponent index + rule index → rule 조회용 리스트
+              # CodeQL SARIF는 result.rule = {id, index, toolComponent: {index}}
+              tool_components = [run.get('tool', {}).get('driver', {})] + extensions
+
+              def find_rule(res):
+                  """result에서 rule 객체를 찾는 함수 (ruleId 매칭 → index 매칭 순)"""
+                  rid = res.get('ruleId', '')
+                  # 1순위: ruleId로 직접 매칭
+                  if rid and rid in tr:
+                      return tr[rid]
+                  # 2순위: result.rule.toolComponent.index + rule.index로 조회
+                  rule_ref = res.get('rule', {})
+                  rule_idx = rule_ref.get('index')
+                  tc_ref = rule_ref.get('toolComponent', {})
+                  tc_idx = tc_ref.get('index', 0)  # 0 = driver
+                  if rule_idx is not None and tc_idx < len(tool_components):
+                      comp_rules = tool_components[tc_idx].get('rules', [])
+                      if rule_idx < len(comp_rules):
+                          return comp_rules[rule_idx]
+                  return {}
 
               for res in run.get('results', []):
                   rid = res.get('ruleId', '?')
-                  ri = tr.get(rid, {})
+                  ri = find_rule(res)
+                  # rule을 못 찾으면 result의 level로 fallback
+                  if not ri.get('properties'):
+                      lvl = (res.get('level') or 'warning').lower()
+                      fallback_sev = {'error':'Error','warning':'Warning','note':'Note'}.get(lvl, 'Warning')
+                  else:
+                      fallback_sev = None
 
                   # 첫 번째 location 기준으로 파일/라인 추출
                   uri, line = '', ''
@@ -256,7 +320,7 @@ jobs:
                       continue
                   seen.add(dedup_key)
 
-                  severity = get_severity(ri.get('properties', {}))
+                  severity = fallback_sev if fallback_sev else get_severity(ri.get('properties', {}))
                   sev[severity] = sev.get(severity, 0) + 1
 
                   if not hide_rule_id:
