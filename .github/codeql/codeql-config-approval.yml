@@ -1,14 +1,102 @@
+# ╔══════════════════════════════════════════════════════════════════╗
+# ║  CodeQL Config - 인허가 제출용 (approval)                       ║
+# ║  - 인허가 심사에 불필요한 규칙은 query-filters로 제외             ║
+# ║  - Workflow에서 config-file 파라미터로 이 파일이 로드됨            ║
+# ║  - 참조: codeql.yml > STEP 6 > config-file                      ║
+# ╚══════════════════════════════════════════════════════════════════╝
+
+# ────────────────────────────────────────────────
+# [TAG: name] 설정 파일 식별 이름 (로그에서 구분용)
+# ────────────────────────────────────────────────
 name: "CodeQL Config - ATsens Android (approval)"
 
+# ────────────────────────────────────────────────
+# [TAG: queries] 사용할 CodeQL Query Pack 목록
+# ────────────────────────────────────────────────
+# - security-and-quality: 보안 + 코드 품질 규칙 포함
+# - security-extended: 추가 보안 규칙 (실험적 규칙 포함)
+# - 기본(default)만 쓰면 보안 규칙만 적용됨
+# - 둘 다 쓰면 가장 넓은 범위로 분석
 queries:
   - uses: security-and-quality
   - uses: security-extended
 
+# ──────────────────────────────────────────────
+# [TAG: query-filters] 규칙 제외 필터 (인허가 심사용)
+# ──────────────────────────────────────────────
+# 소나큐브의 "Won't Fix" / "False Positive" 와 유사한 기능입니다.
+# 'exclude' 로 지정된 규칙은 결과에서 완전히 제거됩니다.
+#
+# ■ 규칙 제외 방법 4가지:
+#   1) Rule ID로 제외:    exclude: {id: "java/rule-id-here"}
+#   2) CWE 태그로 제외:   exclude: {tags: "external/cwe/cwe-XXX"}
+#   3) severity로 제외:   exclude: {severity: "recommendation"}
+#   4) 정규식 패턴 제외:  exclude: {id: /java\/log-.*/}
+#
+# ■ 새 규칙을 패스시키려면:
+#   아래 query-filters 목록에 exclude 항목을 추가하세요.
+#
+# ■ Rule ID 확인 방법:
+#   internal 모드로 실행 → Actions Summary의 Rules 테이블에서 확인
+#   또는 GitHub Security > Code Scanning에서 각 항목의 Rule ID 확인
+# ──────────────────────────────────────────────
+query-filters:
+  # --- 인허가 심사에서 일반적으로 문제없는 항목 제외 ---
+
+  # [FILTER 1] Empty method body (빈 메서드)
+  # - 인터페이스 콜백, abstract 구현 등 의도적인 빈 메서드는 보안 이슈 아님
+  - exclude:
+      id: java/empty-block
+
+  # [FILTER 2] Unused import (미사용 import)
+  # - 코드 정리(lint) 수준의 품질 이슈이며 보안 취약점 아님
+  - exclude:
+      id: java/unused-import
+
+  # [FILTER 3] Deprecated method call (deprecated API 호출)
+  # - 레거시 호환 목적이므로 인허가 보안 심사와 무관
+  - exclude:
+      id: java/deprecated-call
+
+  # [FILTER 4] Unused variable (미사용 변수)
+  # - 코드 품질 이슈일 뿐 보안 위험 없음
+  - exclude:
+      id: java/unused-variable
+
+  # [FILTER 5] Dead code (도달 불가 코드)
+  # - 실행되지 않는 코드이므로 보안 영향 없음
+  - exclude:
+      id: java/dead-code
+
+  # [FILTER 6] severity: recommendation 전체 제외
+  # - CodeQL의 가장 낮은 심각도 (참고/권장 수준)
+  # - 보안 심사에서 요구하지 않는 수준의 항목들
+  - exclude:
+      severity: recommendation
+
+  # [FILTER 7] CWE-561 (Dead Code) 태그로 제외
+  # - FILTER 5와 동일 카테고리지만, 다른 규칙에서도 이 CWE 태그가
+  #   붙을 수 있으므로 태그 기반으로도 제외
+  - exclude:
+      tags: "external/cwe/cwe-561"
+
+  # ─── 추가 제외가 필요한 경우 아래에 추가 ───
+  # - exclude:
+  #     id: java/some-other-rule
+  # - exclude:
+  #     tags: "external/cwe/cwe-XXX"
+
+# ────────────────────────────────────────────────
+# [TAG: paths-ignore] 분석에서 제외할 경로 패턴
+# ────────────────────────────────────────────────
+# - 테스트 코드, 빌드 산출물, Gradle 설정 파일 등
+# - 이 경로의 파일은 CodeQL 데이터베이스에 포함되지 않음
+# - glob 패턴 사용 (** = 모든 하위 디렉토리)
 paths-ignore:
-  - '**/*Test*.java'
-  - '**/*Test*.kt'
-  - '**/test/**'
-  - '**/androidTest/**'
-  - '**/build/**'
-  - '**/*.gradle'
-  - '**/gradle/**'
+  - '**/*Test*.java'       # Java 테스트 파일 (파일명에 Test 포함)
+  - '**/*Test*.kt'         # Kotlin 테스트 파일
+  - '**/test/**'           # test 디렉토리 전체
+  - '**/androidTest/**'    # Android instrumented test 디렉토리
+  - '**/build/**'          # Gradle 빌드 산출물
+  - '**/*.gradle'          # Gradle 빌드 스크립트
+  - '**/gradle/**'         # Gradle wrapper 파일
