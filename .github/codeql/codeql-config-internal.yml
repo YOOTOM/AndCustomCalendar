@@ -1,47 +1,28 @@
 # ╔══════════════════════════════════════════════════════════════════╗
 # ║  CodeQL Config - 내부 개발용 (internal)                         ║
 # ║  - 모든 규칙을 필터 없이 전부 표시                                ║
-# ║  - push/PR/schedule 자동 실행 시 기본 적용                       ║
 # ║  - 참조: codeql.yml > STEP 6 > config-file                      ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
-# ────────────────────────────────────────────────
-# [TAG: name] 설정 파일 식별 이름 (로그에서 구분용)
-# ────────────────────────────────────────────────
 name: "CodeQL Config - ATsens Android (internal)"
 
-# ────────────────────────────────────────────────
-# [TAG: queries] 사용할 CodeQL Query Pack 목록
-# ────────────────────────────────────────────────
-# - security-and-quality: 보안 + 코드 품질 규칙 포함
-# - security-extended: 추가 보안 규칙 (실험적 규칙 포함)
-# - 내부용이므로 최대한 넓은 범위로 분석하여 모든 이슈 확인
+# ── Query Pack ──
 queries:
   - uses: security-and-quality
   - uses: security-extended
 
-# ──────────────────────────────────────────────
-# [TAG: query-filters] 규칙 제외 필터
-# ──────────────────────────────────────────────
-# - 내부용: 기본적으로 모든 규칙을 표시합니다.
-# - 개발팀 내부에서 특정 규칙을 제외하려면 주석을 해제하세요.
-# - 제외 방법은 approval config 파일의 주석을 참고하세요.
-#
+# ── query-filters: 내부용은 필터 없음 (모든 규칙 표시) ──
+# 특정 규칙을 제외하려면 approval config 참고
 # query-filters:
 #   - exclude:
 #       id: java/unused-import
 
-# ────────────────────────────────────────────────
-# [TAG: paths-ignore] 분석에서 제외할 경로 패턴
-# ────────────────────────────────────────────────
-# - 테스트 코드, 빌드 산출물, Gradle 설정 파일 등
-# - 이 경로의 파일은 CodeQL 데이터베이스에 포함되지 않음
-# - glob 패턴 사용 (** = 모든 하위 디렉토리)
+# ── paths-ignore: 분석 제외 경로 ──
 paths-ignore:
-  - '**/*Test*.java'       # Java 테스트 파일 (파일명에 Test 포함)
-  - '**/*Test*.kt'         # Kotlin 테스트 파일
-  - '**/test/**'           # test 디렉토리 전체
-  - '**/androidTest/**'    # Android instrumented test 디렉토리
-  - '**/build/**'          # Gradle 빌드 산출물
-  - '**/*.gradle'          # Gradle 빌드 스크립트
-  - '**/gradle/**'         # Gradle wrapper 파일
+  - '**/*Test*.java'
+  - '**/*Test*.kt'
+  - '**/test/**'
+  - '**/androidTest/**'
+  - '**/build/**'
+  - '**/*.gradle'
+  - '**/gradle/**'

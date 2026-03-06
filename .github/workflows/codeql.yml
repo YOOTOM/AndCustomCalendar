@@ -1,38 +1,19 @@
 # ╔══════════════════════════════════════════════════════════════════╗
 # ║  CodeQL 정적 코드 분석 Workflow                                  ║
-# ║  - 보안 취약점 + 코드 품질 분석을 자동 수행                        ║
-# ║  - 결과: GitHub Security > Code Scanning 탭에서 확인              ║
-# ║  - 인허가(approval) 모드: Rule ID 숨김 + HTML 대시보드 생성       ║
+# ║  - 결과: GitHub Security > Code Scanning                        ║
+# ║  - approval 모드: Rule ID 숨김 + HTML 대시보드 + 규칙 필터링     ║
 # ╚══════════════════════════════════════════════════════════════════╝
 
-# ────────────────────────────────────────────────
-# [TAG: name] Workflow 이름
-# ────────────────────────────────────────────────
-# - GitHub Actions 탭에서 표시되는 Workflow 이름
-# - 여러 Workflow가 있을 때 구분용
 name: "CodeQL (ATsens Android)"
 
-# ────────────────────────────────────────────────
-# [TAG: on] 트리거 조건 (언제 이 Workflow가 실행되는가)
-# ────────────────────────────────────────────────
 on:
-  # [TAG: on.push] master 브랜치에 코드가 push될 때 자동 실행
   push:
     branches: [ "master" ]
-
-  # [TAG: on.pull_request] master 대상 PR 생성/업데이트 시 자동 실행
   pull_request:
     branches: [ "master" ]
-
-  # [TAG: on.workflow_dispatch] GitHub Actions UI에서 수동 실행
-  # - "Run workflow" 버튼을 눌러서 실행 가능
-  # - inputs: 수동 실행 시 사용자가 입력할 파라미터 정의
   workflow_dispatch:
     inputs:
       profile:
-        # [TAG: inputs.profile] 분석 프로파일 선택
-        # - "internal": 내부 개발용 (Rule ID 표시, 모든 규칙 분석)
-        # - "approval": 인허가 제출용 (Rule ID 숨김, 규칙 필터링 적용)
         description: "internal | approval"
         required: true
         default: "approval"
@@ -40,142 +21,62 @@ on:
         options:
           - internal
           - approval
-
-  # [TAG: on.schedule] cron 스케줄 자동 실행
-  # - '29 14 * * 2' = 매주 화요일 14:29 UTC (한국시간 23:29)
-  # - 형식: 분 시 일 월 요일 (0=일, 1=월, ..., 6=토)
   schedule:
-    - cron: '29 14 * * 2'
+    - cron: '29 14 * * 2'   # 매주 화요일 14:29 UTC (한국 23:29)
 
-# ────────────────────────────────────────────────
-# [TAG: jobs] 실행할 작업 목록
-# ────────────────────────────────────────────────
 jobs:
   analyze:
-    # [TAG: jobs.analyze.name] Actions UI에 표시되는 Job 이름
     name: Static Code Analysis
-
-    # [TAG: jobs.analyze.runs-on] 실행 환경 (GitHub 호스팅 러너)
-    # - ubuntu-latest: Ubuntu 최신 버전 VM
-    # - 다른 옵션: windows-latest, macos-latest, self-hosted
     runs-on: ubuntu-latest
-
-    # [TAG: jobs.analyze.timeout-minutes] Job 최대 실행 시간 (분)
-    # - 초과 시 자동 취소됨 (무한 루프 방지)
     timeout-minutes: 30
 
-    # ────────────────────────────────────────────
-    # [TAG: permissions] GitHub 토큰(GITHUB_TOKEN) 권한 설정
-    # ────────────────────────────────────────────
-    # - 이 Job이 GitHub API에 접근할 때 필요한 최소 권한
-    # - 보안을 위해 필요한 것만 명시 (Least Privilege 원칙)
     permissions:
-      contents: read          # 저장소 코드 읽기 (checkout에 필요)
-      actions: read           # Actions 메타데이터 접근
-      packages: read          # CodeQL query pack 다운로드
-      security-events: write  # CodeQL SARIF 결과를 Security 탭에 업로드
-      pages: write            # GitHub Pages 배포 (approval 대시보드용)
-      id-token: write         # GitHub Pages 배포 인증 토큰
+      contents: read
+      actions: read
+      packages: read
+      security-events: write
+      pages: write
+      id-token: write
 
-    # ────────────────────────────────────────────
-    # [TAG: strategy] 빌드 매트릭스 전략
-    # ────────────────────────────────────────────
     strategy:
-      # [TAG: strategy.fail-fast] 매트릭스 중 하나 실패해도 나머지 계속 실행
-      # - true: 하나 실패 → 전부 취소
-      # - false: 하나 실패해도 나머지 계속 진행
       fail-fast: false
-
-      # [TAG: strategy.matrix] 분석 대상 매트릭스 정의
-      # - 언어를 추가하면 자동으로 병렬 실행됨
-      # - 예: javascript-typescript를 추가하면 JS/TS도 분석
       matrix:
         include:
-          - language: java-kotlin    # 분석 언어 (Java + Kotlin)
-            build-mode: manual       # 빌드 방식 (manual: 직접 빌드 명령 실행)
-              # - manual: 아래 "Build (Gradle)" 스텝에서 직접 빌드
-              # - autobuild: CodeQL이 자동 빌드 시도
-            # - none: 빌드 없이 분석 (인터프리터 언어)
+          - language: java-kotlin
+            build-mode: manual
 
-    # ────────────────────────────────────────────
-    # [TAG: steps] 실행 단계 (위에서 아래로 순서대로 실행)
-    # ────────────────────────────────────────────
     steps:
 
-      # ══════════════════════════════════════════
-      # STEP 1: 소스 코드 체크아웃
-      # ══════════════════════════════════════════
-      # [TAG: actions/checkout@v4]
-      # - GitHub 저장소 코드를 러너 VM으로 복사
-      # - 이 스텝이 없으면 소스 코드가 없어서 빌드/분석 불가
+      # ── STEP 1: 소스 코드 체크아웃 ──
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ══════════════════════════════════════════
-      # STEP 2: 프로파일 결정 (internal vs approval)
-      # ══════════════════════════════════════════
-      # [TAG: Resolve profile]
-      # - 수동 실행(workflow_dispatch)이면 → 사용자가 선택한 profile 사용
-      # - 자동 실행(push/PR/schedule)이면 → 항상 "approval" 사용
-      #   → approval config의 query-filters가 자동 실행에도 실제 적용되도록 변경
-      # - 출력값(outputs):
-      #   ① steps.profile.outputs.value       = "internal" 또는 "approval"
-      #   ② steps.profile.outputs.hide_rule_id = "true" 또는 "false"
-      # - 이 값들은 이후 스텝에서 ${{ steps.profile.outputs.XXX }}로 참조
+      # ── STEP 2: 프로파일 결정 ──
+      # 수동 실행 → 선택한 profile / 자동 실행 → approval
       - name: Resolve profile
         id: profile
         shell: bash
         run: |
-          # [기존 로직 - 자동 실행 시 항상 internal]
-          # if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-          #   echo "value=${{ inputs.profile }}" >> $GITHUB_OUTPUT
-          # else
-          #   echo "value=internal" >> $GITHUB_OUTPUT
-          # fi
-          # if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.profile }}" = "approval" ]; then
-          #   echo "hide_rule_id=true" >> $GITHUB_OUTPUT
-          # else
-          #   echo "hide_rule_id=false" >> $GITHUB_OUTPUT
-          # fi
-
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             PROFILE="${{ inputs.profile }}"
           else
             PROFILE="approval"
           fi
-
           echo "value=$PROFILE" >> "$GITHUB_OUTPUT"
-
           if [ "$PROFILE" = "approval" ]; then
             echo "hide_rule_id=true" >> "$GITHUB_OUTPUT"
           else
             echo "hide_rule_id=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # ══════════════════════════════════════════
-      # STEP 2-1: 적용 프로파일 디버그 출력
-      # ══════════════════════════════════════════
-      # [TAG: Debug selected profile]
-      # - 어떤 event/profile/config가 실제 적용됐는지 로그에 출력
-      # - approval config가 실제로 로드됐는지 확인할 때 사용
+      # ── STEP 2-1: 디버그 출력 ──
       - name: Debug selected profile
         shell: bash
         run: |
-          echo "event_name=${{ github.event_name }}"
-          echo "ref_name=${{ github.ref_name }}"
-          echo "profile=${{ steps.profile.outputs.value }}"
-          echo "hide_rule_id=${{ steps.profile.outputs.hide_rule_id }}"
-          echo "config_file=./.github/codeql/codeql-config-${{ steps.profile.outputs.value }}.yml"
+          echo "event=${{ github.event_name }} | profile=${{ steps.profile.outputs.value }} | hide_rule_id=${{ steps.profile.outputs.hide_rule_id }}"
+          echo "config=./.github/codeql/codeql-config-${{ steps.profile.outputs.value }}.yml"
 
-      # ══════════════════════════════════════════
-      # STEP 3: JDK 17 설치
-      # ══════════════════════════════════════════
-      # [TAG: actions/setup-java@v4]
-      # - Android/Kotlin 프로젝트 빌드에 필요한 Java 설치
-      # - distribution: JDK 배포판 (temurin = Eclipse Adoptium OpenJDK)
-      #   다른 옵션: zulu, corretto, microsoft, liberica
-      # - java-version: 사용할 Java 버전
-      # - cache: gradle → ~/.gradle/caches를 캐싱하여 빌드 속도 향상
+      # ── STEP 3: JDK 17 설치 ──
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -183,37 +84,16 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      # ══════════════════════════════════════════
-      # STEP 4: Android SDK 설치
-      # ══════════════════════════════════════════
-      # [TAG: android-actions/setup-android@v3]
-      # - Android 빌드에 필요한 SDK 도구 설치
-      # - ANDROID_HOME 환경변수 자동 설정
+      # ── STEP 4: Android SDK 설치 ──
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      # ══════════════════════════════════════════
-      # STEP 5: Android SDK 컴포넌트 설치
-      # ══════════════════════════════════════════
-      # [TAG: sdkmanager]
-      # - compileSdkVersion에 맞는 플랫폼 SDK 설치
-      # - build.gradle의 compileSdkVersion 34에 대응
-      # - compileSdkVersion을 변경하면 여기도 함께 수정 필요
+      # ── STEP 5: SDK 컴포넌트 설치 (compileSdk에 맞춤) ──
       - name: Install Android SDK components
         run: sdkmanager "platforms;android-34"
 
-      # ══════════════════════════════════════════
-      # STEP 6: CodeQL 분석 초기화
-      # ══════════════════════════════════════════
-      # [TAG: github/codeql-action/init@v4]
-      # - CodeQL 분석 엔진 초기화 및 데이터베이스 생성 준비
-      # - languages: 분석할 프로그래밍 언어
-      # - build-mode: 빌드 방식 (manual이면 이후 스텝에서 직접 빌드)
-      # - config-file: CodeQL 설정 파일 경로
-      #   → profile에 따라 다른 설정 파일 로드:
-      #     internal → .github/codeql/codeql-config-internal.yml
-      #     approval → .github/codeql/codeql-config-approval.yml
-      #   → 설정 파일에서 query-filters, paths-ignore 등 제어
+      # ── STEP 6: CodeQL 초기화 ──
+      # config-file로 profile별 설정(query-filters 등) 로드
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
@@ -221,14 +101,7 @@ jobs:
           build-mode: ${{ matrix.build-mode }}
           config-file: ./.github/codeql/codeql-config-${{ steps.profile.outputs.value }}.yml
 
-      # ══════════════════════════════════════════
-      # STEP 7: Gradle 빌드
-      # ══════════════════════════════════════════
-      # [TAG: Build (Gradle)]
-      # - build-mode가 'manual'일 때만 실행 (if 조건)
-      # - CodeQL이 빌드 과정을 모니터링하여 코드 흐름 파악
-      # - clean assembleDebug: 클린 빌드 후 디버그 APK 생성
-      # - --no-daemon: CI 환경에서 Gradle 데몬 사용 안 함 (메모리 절약)
+      # ── STEP 7: Gradle 빌드 ──
       - name: Build (Gradle)
         if: matrix.build-mode == 'manual'
         shell: bash
@@ -236,33 +109,17 @@ jobs:
           chmod +x ./gradlew
           ./gradlew clean assembleDebug --no-daemon
 
-      # ══════════════════════════════════════════
-      # STEP 8: CodeQL 분석 실행
-      # ══════════════════════════════════════════
-      # [TAG: github/codeql-action/analyze@v4]
-      # - 빌드된 코드에 대해 보안/품질 분석 수행
-      # - 결과를 SARIF(Static Analysis Results Interchange Format) 형식으로 생성
-      # - category: GitHub Security 대시보드에서 결과 구분용 태그
-      # - output: SARIF 파일 저장 디렉토리 (디버그 로그 + HTML 대시보드에서 활용)
-      # - upload: never → 자동 업로드 비활성화하고 STEP 8-2에서 수동 업로드
-      #   ↳ 디버그 스텝(8-1)에서 SARIF 내용을 확인한 후 업로드하기 위해
+      # ── STEP 8: CodeQL 분석 ──
+      # upload: never → 디버그 확인 후 STEP 8-2에서 수동 업로드
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
-
           category: "/${{ steps.profile.outputs.value }}/language:${{ matrix.language }}"
           output: sarif-results
           upload: never
 
-      # ══════════════════════════════════════════
-      # STEP 8-1: (디버그) SARIF 내 Rule ID 목록 출력
-      # ══════════════════════════════════════════
-      # [TAG: Debug SARIF Rule IDs]
-      # - SARIF에 어떤 Rule ID가 포함되었는지 로그에 출력
-      # - query-filters의 exclude가 제대로 동작했는지 확인용
-      # - 실제 필터링은 query-filters가 담당 (SARIF를 직접 수정하지 않음)
-      #   → exclude에 넣으면 쿼리 자체가 실행 안 됨 → SARIF에 결과 없음 → Fixed
-      #   → exclude에서 빼면 쿼리 실행됨 → SARIF에 결과 있음 → Open
+      # ── STEP 8-1: (디버그) SARIF Rule ID 출력 ──
+      # query-filters exclude가 제대로 동작했는지 로그에서 확인
       - name: Debug SARIF contents
         if: always()
         shell: bash
@@ -285,72 +142,30 @@ jobs:
               print(f"[Debug] Total results: {len(run.get('results',[]))}")
           PYEOF
 
-      # ══════════════════════════════════════════
-      # STEP 8-2: SARIF 업로드 (Code Scanning에 반영)
-      # ══════════════════════════════════════════
-      # [TAG: github/codeql-action/upload-sarif@v4]
-      # - CodeQL이 생성한 SARIF를 GitHub Security > Code Scanning에 업로드
-      # - query-filters에서 exclude된 규칙은 쿼리 자체가 실행되지 않으므로
-      #   SARIF에 결과가 없음 → 업로드 시 이전 alert가 자동 "Fixed" 처리
-      # - query-filters에서 exclude를 빼면 쿼리가 실행됨
-      #   → SARIF에 결과 포함 → 업로드 시 alert가 다시 "Open"
+      # ── STEP 8-2: SARIF 업로드 ──
+      # exclude된 규칙 → SARIF에 없음 → 이전 alert 자동 "Fixed"
+      # exclude에서 뺀 규칙 → SARIF에 있음 → alert 다시 "Open"
       - name: Upload SARIF to Code Scanning
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: sarif-results
           category: "/${{ steps.profile.outputs.value }}/language:${{ matrix.language }}"
 
-      # ══════════════════════════════════════════
-      # STEP 8-3: 이전 category의 잔존 alert를 "Fixed"로 전환
-      # ══════════════════════════════════════════
-      # [TAG: Supersede stale analyses]
-      # ■ 왜 필요한가?
-      #   - 이전에 다른 category (예: /internal/...) 또는 필터링 전 category로
-      #     업로드된 alert가 Code Scanning에 "Open" 상태로 남아 있을 수 있음
-      #   - GitHub Code Scanning은 alert를 "삭제"하지 않음
-      #     → Dismiss = "Closed" 상태 (리스트의 Closed 탭에 잔존)
-      #     → 같은 category로 해당 결과가 없는 SARIF를 업로드하면 "Fixed" 상태
-      # ■ 방법:
-      #   - 이전에 사용했을 수 있는 모든 category에 대해
-      #     빈 결과의 SARIF를 업로드하여 "Fixed" 상태로 자동 전환
-      #   - 이것이 "Closed(Dismissed)"가 아닌 "Fixed"를 만드는 유일한 방법
-      - name: Supersede stale analyses (make old alerts "Fixed")
+      # ── STEP 8-3: 이전 category 잔존 alert → "Fixed" 전환 ──
+      # 이전에 다른 category로 올라간 alert를 빈 SARIF로 덮어 Fixed 처리
+      - name: Supersede stale analyses
         if: steps.profile.outputs.value == 'approval'
         shell: bash
         run: |
-          # ── 이전에 사용했을 수 있는 다른 category 목록 ──
-          # 현재 category: /approval/language:java-kotlin
-          # 이전 가능한 category들:
-          STALE_CATEGORIES=(
-            "/internal/language:${{ matrix.language }}"
-            "/language:${{ matrix.language }}"
-          )
-
-          # ── 빈 결과의 유효한 SARIF 파일 생성 ──
           mkdir -p sarif-empty
-          cat > sarif-empty/empty.sarif << 'SARIF_EOF'
+          cat > sarif-empty/empty.sarif << 'EOF'
           {
             "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
             "version": "2.1.0",
-            "runs": [
-              {
-                "tool": {
-                  "driver": {
-                    "name": "CodeQL",
-                    "version": "0.0.0",
-                    "rules": []
-                  }
-                },
-                "results": []
-              }
-            ]
+            "runs": [{"tool": {"driver": {"name": "CodeQL", "version": "0.0.0", "rules": []}}, "results": []}]
           }
-          SARIF_EOF
+          EOF
 
-          echo "[Supersede] Empty SARIF created at sarif-empty/empty.sarif"
-          echo "[Supersede] Will upload to stale categories: ${STALE_CATEGORIES[*]}"
-
-      # 이전 /internal/ category로 빈 SARIF 업로드 → 해당 category의 alert가 "Fixed"로 전환
       - name: Upload empty SARIF to stale category (internal)
         if: steps.profile.outputs.value == 'approval'
         uses: github/codeql-action/upload-sarif@v4
@@ -359,7 +174,6 @@ jobs:
           sarif_file: sarif-empty/empty.sarif
           category: "/internal/language:${{ matrix.language }}"
 
-      # 이전 profile 없는 category로 빈 SARIF 업로드
       - name: Upload empty SARIF to stale category (legacy)
         if: steps.profile.outputs.value == 'approval'
         uses: github/codeql-action/upload-sarif@v4
@@ -368,20 +182,9 @@ jobs:
           sarif_file: sarif-empty/empty.sarif
           category: "/language:${{ matrix.language }}"
 
-      # ══════════════════════════════════════════
-      # STEP 9: 인허가용 HTML 대시보드 생성
-      # ══════════════════════════════════════════
-      # [TAG: Generate Approval Dashboard]
-      # - approval 프로파일일 때만 실행 (if 조건)
-      # - SARIF 결과를 파싱하여 Rule ID가 없는 HTML 보고서 생성
-      # - 인허가 심사 제출용: Rule ID/Query ID 의도적으로 숨김
-      # - 생성 위치: site/index.html → 이후 GitHub Pages로 배포
-      # - 내부 Python 스크립트 동작:
-      #   ① SARIF 파일에서 findings 추출
-      #   ② severity 매핑 (error→Critical, warning→High, note→Medium)
-      #   ③ 파일 위치, 설명, 권장사항 포함한 HTML 테이블 생성
-      #   ④ Rule ID는 의도적으로 제외
-      - name: Generate Approval Dashboard (HTML, No Rule/Query IDs)
+      # ── STEP 9: 인허가용 HTML 대시보드 ──
+      # SARIF → Rule ID 없는 HTML 보고서 생성 → GitHub Pages 배포
+      - name: Generate Approval Dashboard
         if: steps.profile.outputs.value == 'approval'
         shell: bash
         run: |
@@ -395,17 +198,13 @@ jobs:
           python3 << 'PY'
           import json, os, html, datetime
 
-          # ── SARIF 파일 로드 ──
           sarif_path = os.popen("find sarif-results -name '*.sarif' -type f | head -1").read().strip()
           data = json.load(open(sarif_path, encoding="utf-8"))
-
-          # ── GitHub 환경변수에서 메타정보 추출 ──
           repo = os.environ.get("GITHUB_REPOSITORY", "")
           ref  = os.environ.get("GITHUB_REF_NAME", "")
           sha  = os.environ.get("GITHUB_SHA", "")[:8]
           now  = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
 
-          # ── SARIF level → 대시보드용 severity 매핑 ──
           def sev_norm(level):
               level = (level or "").lower()
               if level == "error": return "Critical"
@@ -413,7 +212,6 @@ jobs:
               if level == "note": return "Medium"
               return "Low"
 
-          # ── 결과의 첫 번째 소스 위치(파일:라인) 추출 ──
           def get_first_location(res):
               locs = res.get("locations") or []
               if not locs: return ("", "")
@@ -425,7 +223,6 @@ jobs:
                   line = str(region["startLine"])
               return (f, line)
 
-          # ── SARIF 결과 파싱 (Rule ID는 의도적으로 HTML에 포함하지 않음) ──
           items = []
           for run in data.get("runs", []):
               rules_by_id = {r.get("id"): r for r in run.get("tool", {}).get("driver", {}).get("rules", []) if isinstance(r, dict)}
@@ -437,27 +234,16 @@ jobs:
                   rule = rules_by_id.get(rid, {}) if rid else {}
                   desc = ((rule.get("shortDescription") or {}).get("text") or "")
                   help_md = ((rule.get("help") or {}).get("markdown") or (rule.get("help") or {}).get("text") or "")
-                  items.append({
-                      "title": title,
-                      "sev": sev,
-                      "file": f,
-                      "line": line,
-                      "desc": desc,
-                      "help": help_md,
-                  })
+                  items.append({"title": title, "sev": sev, "file": f, "line": line, "desc": desc, "help": help_md})
 
-          # ── severity 기준 정렬 (Critical → High → Medium → Low) ──
           order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
           items.sort(key=lambda x: (order.get(x["sev"], 9), x["file"], x["line"]))
-
-          # ── severity별 건수 집계 ──
           counts = {}
           for it in items:
-              counts[it["sev"]] = counts.get(it["sev"] , 0) + 1
+              counts[it["sev"]] = counts.get(it["sev"], 0) + 1
 
           def esc(s): return html.escape(s or "")
 
-          # ── HTML 대시보드 스타일 (소나큐브 대시보드와 유사한 카드 레이아웃) ──
           css = """
           body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;line-height:1.5}
           h1{margin:0 0 8px 0}
@@ -465,130 +251,62 @@ jobs:
           .badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;margin-right:6px;border:1px solid #ddd}
           .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0 18px}
           .card{border:1px solid #e5e5e5;border-radius:12px;padding:12px}
-          .k{color:#666;font-size:12px}
-          .v{font-size:20px;font-weight:700}
+          .k{color:#666;font-size:12px} .v{font-size:20px;font-weight:700}
           .tbl{width:100%;border-collapse:collapse;margin-top:10px}
           .tbl th,.tbl td{border-bottom:1px solid #eee;padding:10px;vertical-align:top;text-align:left}
-          .small{color:#666;font-size:12px}
-          .hr{height:1px;background:#eee;margin:18px 0}
+          .small{color:#666;font-size:12px} .hr{height:1px;background:#eee;margin:18px 0}
           """
 
-          def badge(sev):
-              return f'<span class="badge">{esc(sev)}</span>'
-
-          # ── 각 finding을 HTML 테이블 행으로 변환 ──
           rows = []
           for i, it in enumerate(items, 1):
               loc = it["file"] + (f":{it['line']}" if it["line"] else "")
               rec = it["help"].strip()
-              if len(rec) > 1200:
-                  rec = rec[:1200] + "\n\n…(truncated)…"
-              rows.append(f"""
-          <tr>
+              if len(rec) > 1200: rec = rec[:1200] + "\n\n…(truncated)…"
+              rows.append(f"""<tr>
           <td class="small">{i}</td>
-          <td>{badge(it["sev"])}<b>{esc(it["title"])}</b><div class="small">{esc(it["desc"])}</div></td>
-          <td><code>{esc(loc) if loc else "(not available)"}</code></td>
-          <td>{('<pre style="white-space:pre-wrap;margin:0">'+esc(rec)+'</pre>') if rec else '<span class="small">(No recommendation text)</span>'}</td>
-          </tr>
-          """)
+          <td><span class="badge">{esc(it["sev"])}</span><b>{esc(it["title"])}</b><div class="small">{esc(it["desc"])}</div></td>
+          <td><code>{esc(loc) if loc else "(n/a)"}</code></td>
+          <td>{('<pre style="white-space:pre-wrap;margin:0">'+esc(rec)+'</pre>') if rec else '<span class="small">(none)</span>'}</td>
+          </tr>""")
 
-          # ── 최종 HTML 조립 ──
-          html_out = f"""<!doctype html>
-          <html lang="en">
-          <head>
-          <meta charset="utf-8"/>
-          <meta name="viewport" content="width=device-width, initial-scale=1"/>
-          <title>CodeQL Approval Dashboard</title>
-          <style>{css}</style>
-          </head>
-          <body>
-          <h1>CodeQL Security Assessment (Approval Dashboard)</h1>
-          <div class="meta">
-          Repository: <code>{esc(repo)}</code> &nbsp;|&nbsp;
-          Branch: <code>{esc(ref)}</code> &nbsp;|&nbsp;
-          Commit: <code>{esc(sha)}</code> &nbsp;|&nbsp;
-          Generated: {esc(now)}
-          </div>
-
-          <div class="card">
-          <b>Note</b>
-          <div class="small">This dashboard is generated from CodeQL SARIF results. Rule IDs / Query IDs are intentionally not shown for regulatory submission.</div>
-          </div>
-
+          html_out = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"/>
+          <meta name="viewport" content="width=device-width,initial-scale=1"/>
+          <title>CodeQL Approval Dashboard</title><style>{css}</style></head><body>
+          <h1>CodeQL Security Assessment</h1>
+          <div class="meta">Repo: <code>{esc(repo)}</code> | Branch: <code>{esc(ref)}</code> | Commit: <code>{esc(sha)}</code> | {esc(now)}</div>
+          <div class="card"><b>Note</b><div class="small">Rule IDs are intentionally hidden for regulatory submission.</div></div>
           <div class="grid">
-          <div class="card"><div class="k">Total findings</div><div class="v">{len(items)}</div></div>
+          <div class="card"><div class="k">Total</div><div class="v">{len(items)}</div></div>
           <div class="card"><div class="k">Critical</div><div class="v">{counts.get("Critical",0)}</div></div>
           <div class="card"><div class="k">High</div><div class="v">{counts.get("High",0)}</div></div>
           <div class="card"><div class="k">Medium</div><div class="v">{counts.get("Medium",0)}</div></div>
-          </div>
-
-          <div class="hr"></div>
-
+          </div><div class="hr"></div>
           <h2>Findings</h2>
-          <table class="tbl">
-          <thead>
-          <tr>
-          <th style="width:48px">#</th>
-          <th>Issue</th>
-          <th style="width:260px">Location</th>
-          <th>Recommendation</th>
-          </tr>
-          </thead>
-          <tbody>
-          {''.join(rows) if rows else '<tr><td colspan="4">No findings were detected.</td></tr>'}
-          </tbody>
-          </table>
-
-          </body>
-          </html>
-          """
+          <table class="tbl"><thead><tr><th style="width:48px">#</th><th>Issue</th><th style="width:260px">Location</th><th>Recommendation</th></tr></thead>
+          <tbody>{''.join(rows) if rows else '<tr><td colspan="4">No findings detected.</td></tr>'}</tbody></table>
+          </body></html>"""
 
           open("site/index.html", "w", encoding="utf-8").write(html_out)
           print("Generated site/index.html")
           PY
 
-      # ══════════════════════════════════════════
-      # STEP 10: GitHub Pages 설정
-      # ══════════════════════════════════════════
-      # [TAG: actions/configure-pages@v5]
-      # - approval 모드일 때만 실행
-      # - GitHub Pages 배포를 위한 사전 설정
-      # - 저장소 Settings > Pages에서 Source를 "GitHub Actions"로 설정 필요
+      # ── STEP 10–12: GitHub Pages 배포 ──
       - name: Configure Pages
         if: steps.profile.outputs.value == 'approval'
         uses: actions/configure-pages@v5
 
-      # ══════════════════════════════════════════
-      # STEP 11: Pages 아티팩트 업로드
-      # ══════════════════════════════════════════
-      # [TAG: actions/upload-pages-artifact@v3]
-      # - site/ 폴더를 GitHub Pages 아티팩트로 업로드
-      # - path: 배포할 정적 파일이 있는 디렉토리
       - name: Upload Pages artifact
         if: steps.profile.outputs.value == 'approval'
         uses: actions/upload-pages-artifact@v3
         with:
           path: site
 
-      # ══════════════════════════════════════════
-      # STEP 12: GitHub Pages 배포
-      # ══════════════════════════════════════════
-      # [TAG: actions/deploy-pages@v4]
-      # - 업로드된 아티팩트를 GitHub Pages로 실제 배포
-      # - 배포 완료 후 https://<user>.github.io/<repo>/ 에서 대시보드 확인
       - name: Deploy to GitHub Pages
         if: steps.profile.outputs.value == 'approval'
         id: deployment
         uses: actions/deploy-pages@v4
 
-      # ══════════════════════════════════════════
-      # STEP 13: SARIF 파일을 Artifact로 보관
-      # ══════════════════════════════════════════
-      # [TAG: actions/upload-artifact@v4]
-      # - if: always() → 빌드 성공/실패 관계없이 항상 실행
-      # - SARIF 원본 파일을 30일간 보관 (다운로드 가능)
-      # - Actions > 해당 실행 > Artifacts 탭에서 다운로드
-      # - retention-days: 보관 기간 (일)
+      # ── STEP 13: SARIF Artifact 보관 (30일) ──
       - name: Upload SARIF as Artifact
         uses: actions/upload-artifact@v4
         if: always()
@@ -597,28 +315,13 @@ jobs:
           path: sarif-results/**/*.sarif
           retention-days: 30
 
-      # ══════════════════════════════════════════
-      # STEP 14: 분석 결과 요약 (GitHub Actions Summary)
-      # ══════════════════════════════════════════
-      # [TAG: Generate Analysis Summary]
-      # - if: always() → 빌드 성공/실패 관계없이 항상 실행
-      # - Actions 실행 페이지 하단의 "Summary" 섹션에 마크다운 테이블 출력
-      # - env.HIDE_RULE_ID: approval이면 "true" → Rule ID 숨김
-      # - 내부 Python 스크립트 동작:
-      #   ① SARIF에서 severity별 건수 집계
-      #   ② Rule별 건수 (internal에서만 표시)
-      #   ③ CWE 목록 (cwe.mitre.org 링크 포함)
-      #   ④ 가장 많이 검출된 파일 Top 10
+      # ── STEP 14: Actions Summary 출력 ──
       - name: Generate Analysis Summary
         if: always()
         shell: bash
         env:
-          # [TAG: env.HIDE_RULE_ID] Rule ID 숨김 여부
-          # - "true": approval 모드 → Rule ID 테이블 미출력
-          # - "false": internal 모드 → Rule ID 테이블 출력
           HIDE_RULE_ID: ${{ steps.profile.outputs.hide_rule_id }}
         run: |
-          # ── 기본 메타정보 테이블 출력 ──
           echo "## CodeQL Analysis Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
@@ -629,28 +332,20 @@ jobs:
           echo "| Commit | ${GITHUB_SHA::8} |" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
-          # ── SARIF 파일이 있으면 Python으로 상세 분석 ──
           SARIF_FILE=$(find sarif-results -name "*.sarif" -type f 2>/dev/null | head -1)
           if [ -n "$SARIF_FILE" ] && [ -f "$SARIF_FILE" ]; then
             python3 << 'PYEOF' >> $GITHUB_STEP_SUMMARY
           import json, os, sys
 
-          # ── 환경변수에서 Rule ID 숨김 여부 읽기 ──
           hide_rule_id = os.environ.get("HIDE_RULE_ID", "false").lower() == "true"
-
           sarif_path = os.popen("find sarif-results -name '*.sarif' -type f | head -1").read().strip()
-          if not sarif_path:
-              sys.exit(0)
+          if not sarif_path: sys.exit(0)
           with open(sarif_path) as f:
               data = json.load(f)
 
-          # ── 집계용 딕셔너리 초기화 ──
-          sev = {'error': 0, 'warning': 0, 'note': 0, 'none': 0}  # severity별 건수
-          rules = {}   # rule별 건수 (internal에서만 사용)
-          cwes = set()  # CWE 번호 집합
-          files = {}   # 파일별 finding 건수
+          sev = {'error': 0, 'warning': 0, 'note': 0, 'none': 0}
+          rules, cwes, files = {}, set(), {}
 
-          # ── SARIF 결과 순회하며 집계 ──
           for run in data.get('runs', []):
               tr = {r['id']: r for r in run.get('tool', {}).get('driver', {}).get('rules', [])}
               for res in run.get('results', []):
@@ -661,8 +356,7 @@ jobs:
                       rules[rid] = rules.get(rid, 0) + 1
                   for loc in res.get('locations', []):
                       u = loc.get('physicalLocation', {}).get('artifactLocation', {}).get('uri', '')
-                      if u:
-                          files[u] = files.get(u, 0) + 1
+                      if u: files[u] = files.get(u, 0) + 1
                   ri = tr.get(rid, {})
                   for t in ri.get('properties', {}).get('tags', []):
                       if t.startswith('external/cwe/cwe-'):
@@ -671,20 +365,15 @@ jobs:
           tot = sum(sev.values())
           unique_rules = len({res.get('ruleId', '?') for run in data.get('runs', []) for res in run.get('results', [])}) if hide_rule_id else len(rules)
 
-          # ── Summary 테이블 출력 ──
           print(f'### Summary')
-          print(f'> **{tot}** findings | **{len(files)}** files | **{unique_rules}** rules | **{len(cwes)}** CWEs')
-          print()
+          print(f'> **{tot}** findings | **{len(files)}** files | **{unique_rules}** rules | **{len(cwes)}** CWEs\n')
           print('| Severity | Count | % |')
           print('|----------|-------|---|')
           for lv in ['error','warning','note','none']:
-              c = sev.get(lv, 0)
-              p = c/tot*100 if tot else 0
+              c = sev.get(lv, 0); p = c/tot*100 if tot else 0
               print(f'| {lv.upper()} | {c} | {p:.1f}% |')
-          print(f'| **Total** | **{tot}** | |')
-          print()
+          print(f'| **Total** | **{tot}** | |\n')
 
-          # ── Rules 테이블 (internal 모드에서만 출력) ──
           if (not hide_rule_id) and rules:
               print('### Rules (Top 20)')
               print('| # | Rule | Count |')
@@ -693,7 +382,6 @@ jobs:
                   print(f'| {i} | `{r}` | {c} |')
               print()
 
-          # ── CWE 목록 (링크 포함) ──
           if cwes:
               print(f'### CWEs ({len(cwes)})')
               for c in sorted(cwes):
@@ -701,17 +389,16 @@ jobs:
                   print(f'- [{c}](https://cwe.mitre.org/data/definitions/{n}.html)')
               print()
 
-          # ── 가장 많이 검출된 파일 Top 10 ──
           if files:
               print('### Top Files')
               print('| # | File | Count |')
               print('|---|------|-------|')
               for i,(f,c) in enumerate(sorted(files.items(), key=lambda x:-x[1])[:10],1):
-                  s = f.split('/')[-1]
-                  print(f'| {i} | `{s}` | {c} |')
+                  print(f'| {i} | `{f.split("/")[-1]}` | {c} |')
           PYEOF
             echo "---" >> $GITHUB_STEP_SUMMARY
             echo "[Code Scanning](/${GITHUB_REPOSITORY}/security/code-scanning) | SARIF in Artifacts tab" >> $GITHUB_STEP_SUMMARY
           else
             echo "No SARIF results found." >> $GITHUB_STEP_SUMMARY
           fi
+
