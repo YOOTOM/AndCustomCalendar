@@ -261,7 +261,7 @@ jobs:
 
           seen = set()
           sev = {}
-          rules, cwes, files = {}, set(), {}
+          rules, files = {}, {}
 
           for run in data.get('runs', []):
               # ── rule 사전 구성 ──
@@ -329,15 +329,12 @@ jobs:
                   if uri:
                       files[uri] = files.get(uri, 0) + 1
 
-                  for t in ri.get('properties', {}).get('tags', []):
-                      if t.startswith('external/cwe/cwe-'):
-                          cwes.add(t.replace('external/cwe/', '').upper())
 
           tot = sum(sev.values())
           unique_rules = len({k[0] for k in seen})
 
           print(f'### Summary')
-          print(f'> **{tot}** findings | **{len(files)}** files | **{unique_rules}** rules | **{len(cwes)}** CWEs\n')
+          print(f'> **{tot}** findings | **{len(files)}** files | **{unique_rules}** rules\n')
           print('| Severity | Count | % |')
           print('|----------|-------|---|')
           sev_order = ['Critical', 'High', 'Error', 'Medium', 'Warning', 'Low', 'Note']
@@ -357,12 +354,6 @@ jobs:
                   print(f'| {i} | `{r}` | {c} |')
               print()
 
-          if cwes:
-              print(f'### CWEs ({len(cwes)})')
-              for c in sorted(cwes):
-                  n = c.replace('CWE-', '')
-                  print(f'- [{c}](https://cwe.mitre.org/data/definitions/{n}.html)')
-              print()
 
           if files:
               print('### Top Files')
