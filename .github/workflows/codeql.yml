@@ -1,11 +1,10 @@
-#CodeQL 정적 코드 분석 Workflow
 name: "CodeQL (ATsens)"
 
 on:
   push:
-    branches: [ "master" ]
+    branches: ["master"]
   pull_request:
-    branches: [ "master" ]
+    branches: ["master"]
   workflow_dispatch:
     inputs:
       profile:
@@ -17,7 +16,7 @@ on:
           - internal
           - approval
   schedule:
-    - cron: '29 14 * * 2'   # 매주 화요일 14:29 UTC (한국 23:29)
+    - cron: '29 14 * * 2' # 매주 화요일 14:29 UTC (한국 23:29)
 
 jobs:
   analyze:
@@ -30,8 +29,6 @@ jobs:
       actions: read
       packages: read
       security-events: write
-      pages: write
-      id-token: write
 
     strategy:
       fail-fast: false
@@ -41,13 +38,11 @@ jobs:
             build-mode: manual
 
     steps:
-
-      # ── 소스 코드 체크아웃 ──
+      # ── 소스 준비 ──
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── 프로파일 결정 ──
-      # 수동 실행 → 선택한 profile / 자동 실행 → approval
+      # 수동 실행은 입력 profile 사용, 자동 실행은 approval로 고정
       - name: Resolve profile
         id: profile
         shell: bash
@@ -58,20 +53,21 @@ jobs:
             PROFILE="approval"
           fi
           echo "value=$PROFILE" >> "$GITHUB_OUTPUT"
+
           if [ "$PROFILE" = "approval" ]; then
             echo "hide_rule_id=true" >> "$GITHUB_OUTPUT"
           else
             echo "hide_rule_id=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # ── 디버그 출력 ──
+      # 선택된 profile / 설정 파일 경로를 로그에 남겨 디버깅
       - name: Debug selected profile
         shell: bash
         run: |
           echo "event=${{ github.event_name }} | profile=${{ steps.profile.outputs.value }} | hide_rule_id=${{ steps.profile.outputs.hide_rule_id }}"
           echo "config=./.github/codeql/codeql-config-${{ steps.profile.outputs.value }}.yml"
 
-      # ── JDK 17 설치 ──
+      # ── 빌드 환경 설정 ──
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -79,16 +75,14 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      # ── Android SDK 설치 ──
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      # ── SDK 컴포넌트 설치 (compileSdk에 맞춤) ──
+      # 프로젝트 compileSdk에 맞는 Android 플랫폼 설치
       - name: Install Android SDK components
         run: sdkmanager "platforms;android-34"
 
-      # ── CodeQL 초기화 ──
-      # config-file로 profile별 설정(query-filters 등) 로드
+      # profile별 CodeQL 설정(query-filters 등) 적용
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
         with:
@@ -96,7 +90,7 @@ jobs:
           build-mode: ${{ matrix.build-mode }}
           config-file: ./.github/codeql/codeql-config-${{ steps.profile.outputs.value }}.yml
 
-      # ── Gradle 빌드 ──
+      # manual build-mode이므로 Gradle 빌드를 직접 수행
       - name: Build (Gradle)
         if: matrix.build-mode == 'manual'
         shell: bash
@@ -104,8 +98,7 @@ jobs:
           chmod +x ./gradlew
           ./gradlew clean assembleDebug --no-daemon
 
-      # ── CodeQL 분석 ──
-      # upload: never → 디버그 확인 후 STEP 8-2에서 수동 업로드
+      # SARIF만 생성하고 업로드는 다음 단계에서 수행
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
@@ -113,8 +106,7 @@ jobs:
           output: sarif-results
           upload: never
 
-      # ── (디버그) SARIF Rule ID 출력 ──
-      # query-filters exclude가 제대로 동작했는지 로그에서 확인
+      # 필터링 결과가 의도대로 반영됐는지 ruleId / 결과 수 확인
       - name: Debug SARIF contents
         if: always()
         shell: bash
@@ -132,22 +124,20 @@ jobs:
           with open(sarif_path) as f:
               data = json.load(f)
           for run in data.get("runs", []):
-              rids = sorted(set(r.get("ruleId","(none)") for r in run.get("results",[])))
+              rids = sorted(set(r.get("ruleId", "(none)") for r in run.get("results", [])))
               print(f"[Debug] Rule IDs in SARIF ({len(rids)}): {rids}")
-              print(f"[Debug] Total results: {len(run.get('results',[]))}")
+              print(f"[Debug] Total results: {len(run.get('results', []))}")
           PYEOF
 
-      # ── SARIF 업로드 ──
-      # exclude된 규칙 → SARIF에 없음 → 이전 alert 자동 "Fixed"
-      # exclude에서 뺀 규칙 → SARIF에 있음 → alert 다시 "Open"
+      # 현재 profile/category 기준 결과를 Code Scanning에 반영
       - name: Upload SARIF to Code Scanning
         uses: github/codeql-action/upload-sarif@v4
         with:
           sarif_file: sarif-results
           category: "/${{ steps.profile.outputs.value }}/language:${{ matrix.language }}"
 
-      # ── 이전 category 잔존 alert → "Fixed" 전환 ──
-      # 이전에 다른 category로 올라간 alert를 빈 SARIF로 덮어 Fixed 처리
+      # ── 이전 category 정리 ──
+      # approval 모드에서는 과거 category 경고를 빈 SARIF로 덮어 Fixed 처리
       - name: Supersede stale analyses
         if: steps.profile.outputs.value == 'approval'
         shell: bash
@@ -161,6 +151,7 @@ jobs:
           }
           EOF
 
+      # 예전 internal category 정리
       - name: Upload empty SARIF to stale category (internal)
         if: steps.profile.outputs.value == 'approval'
         uses: github/codeql-action/upload-sarif@v4
@@ -169,6 +160,7 @@ jobs:
           sarif_file: sarif-empty/empty.sarif
           category: "/internal/language:${{ matrix.language }}"
 
+      # 예전 기본 category 정리
       - name: Upload empty SARIF to stale category (legacy)
         if: steps.profile.outputs.value == 'approval'
         uses: github/codeql-action/upload-sarif@v4
@@ -177,131 +169,7 @@ jobs:
           sarif_file: sarif-empty/empty.sarif
           category: "/language:${{ matrix.language }}"
 
-      # ── HTML 대시보드 ──
-      # SARIF → Rule ID 없는 HTML 보고서 생성 → GitHub Pages 배포
-      - name: Generate Approval Dashboard
-        if: steps.profile.outputs.value == 'approval'
-        shell: bash
-        run: |
-          mkdir -p site
-          SARIF_FILE=$(find sarif-results -name "*.sarif" -type f 2>/dev/null | head -1)
-          if [ -z "$SARIF_FILE" ]; then
-            echo "<h1>No SARIF results found.</h1>" > site/index.html
-            exit 0
-          fi
-
-          python3 << 'PY'
-          import json, os, html, datetime
-
-          sarif_path = os.popen("find sarif-results -name '*.sarif' -type f | head -1").read().strip()
-          data = json.load(open(sarif_path, encoding="utf-8"))
-          repo = os.environ.get("GITHUB_REPOSITORY", "")
-          ref  = os.environ.get("GITHUB_REF_NAME", "")
-          sha  = os.environ.get("GITHUB_SHA", "")[:8]
-          now  = datetime.datetime.utcnow().strftime("%Y-%m-%d %H:%M UTC")
-
-          def sev_norm(level):
-              level = (level or "").lower()
-              if level == "error": return "Critical"
-              if level == "warning": return "High"
-              if level == "note": return "Medium"
-              return "Low"
-
-          def get_first_location(res):
-              locs = res.get("locations") or []
-              if not locs: return ("", "")
-              pl = (locs[0].get("physicalLocation") or {})
-              f = (pl.get("artifactLocation") or {}).get("uri", "") or ""
-              line = ""
-              region = pl.get("region") or {}
-              if region.get("startLine"):
-                  line = str(region["startLine"])
-              return (f, line)
-
-          items = []
-          for run in data.get("runs", []):
-              rules_by_id = {r.get("id"): r for r in run.get("tool", {}).get("driver", {}).get("rules", []) if isinstance(r, dict)}
-              for res in run.get("results", []):
-                  title = ((res.get("message") or {}).get("text") or "(no title)").splitlines()[0].strip()
-                  sev = sev_norm(res.get("level", "none"))
-                  f, line = get_first_location(res)
-                  rid = res.get("ruleId")
-                  rule = rules_by_id.get(rid, {}) if rid else {}
-                  desc = ((rule.get("shortDescription") or {}).get("text") or "")
-                  help_md = ((rule.get("help") or {}).get("markdown") or (rule.get("help") or {}).get("text") or "")
-                  items.append({"title": title, "sev": sev, "file": f, "line": line, "desc": desc, "help": help_md})
-
-          order = {"Critical": 0, "High": 1, "Medium": 2, "Low": 3}
-          items.sort(key=lambda x: (order.get(x["sev"], 9), x["file"], x["line"]))
-          counts = {}
-          for it in items:
-              counts[it["sev"]] = counts.get(it["sev"], 0) + 1
-
-          def esc(s): return html.escape(s or "")
-
-          css = """
-          body{font-family:system-ui,-apple-system,Segoe UI,Roboto,Arial,sans-serif;margin:24px;line-height:1.5}
-          h1{margin:0 0 8px 0}
-          .meta{color:#666;margin-bottom:16px}
-          .badge{display:inline-block;padding:2px 10px;border-radius:999px;font-size:12px;margin-right:6px;border:1px solid #ddd}
-          .grid{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:10px;margin:14px 0 18px}
-          .card{border:1px solid #e5e5e5;border-radius:12px;padding:12px}
-          .k{color:#666;font-size:12px} .v{font-size:20px;font-weight:700}
-          .tbl{width:100%;border-collapse:collapse;margin-top:10px}
-          .tbl th,.tbl td{border-bottom:1px solid #eee;padding:10px;vertical-align:top;text-align:left}
-          .small{color:#666;font-size:12px} .hr{height:1px;background:#eee;margin:18px 0}
-          """
-
-          rows = []
-          for i, it in enumerate(items, 1):
-              loc = it["file"] + (f":{it['line']}" if it["line"] else "")
-              rec = it["help"].strip()
-              if len(rec) > 1200: rec = rec[:1200] + "\n\n…(truncated)…"
-              rows.append(f"""<tr>
-          <td class="small">{i}</td>
-          <td><span class="badge">{esc(it["sev"])}</span><b>{esc(it["title"])}</b><div class="small">{esc(it["desc"])}</div></td>
-          <td><code>{esc(loc) if loc else "(n/a)"}</code></td>
-          <td>{('<pre style="white-space:pre-wrap;margin:0">'+esc(rec)+'</pre>') if rec else '<span class="small">(none)</span>'}</td>
-          </tr>""")
-
-          html_out = f"""<!doctype html><html lang="en"><head><meta charset="utf-8"/>
-          <meta name="viewport" content="width=device-width,initial-scale=1"/>
-          <title>CodeQL Approval Dashboard</title><style>{css}</style></head><body>
-          <h1>CodeQL Security Assessment</h1>
-          <div class="meta">Repo: <code>{esc(repo)}</code> | Branch: <code>{esc(ref)}</code> | Commit: <code>{esc(sha)}</code> | {esc(now)}</div>
-          <div class="card"><b>Note</b><div class="small">Rule IDs are intentionally hidden for regulatory submission.</div></div>
-          <div class="grid">
-          <div class="card"><div class="k">Total</div><div class="v">{len(items)}</div></div>
-          <div class="card"><div class="k">Critical</div><div class="v">{counts.get("Critical",0)}</div></div>
-          <div class="card"><div class="k">High</div><div class="v">{counts.get("High",0)}</div></div>
-          <div class="card"><div class="k">Medium</div><div class="v">{counts.get("Medium",0)}</div></div>
-          </div><div class="hr"></div>
-          <h2>Findings</h2>
-          <table class="tbl"><thead><tr><th style="width:48px">#</th><th>Issue</th><th style="width:260px">Location</th><th>Recommendation</th></tr></thead>
-          <tbody>{''.join(rows) if rows else '<tr><td colspan="4">No findings detected.</td></tr>'}</tbody></table>
-          </body></html>"""
-
-          open("site/index.html", "w", encoding="utf-8").write(html_out)
-          print("Generated site/index.html")
-          PY
-
-      # ── GitHub Pages 배포 ──
-      - name: Configure Pages
-        if: steps.profile.outputs.value == 'approval'
-        uses: actions/configure-pages@v5
-
-      - name: Upload Pages artifact
-        if: steps.profile.outputs.value == 'approval'
-        uses: actions/upload-pages-artifact@v3
-        with:
-          path: site
-
-      - name: Deploy to GitHub Pages
-        if: steps.profile.outputs.value == 'approval'
-        id: deployment
-        uses: actions/deploy-pages@v4
-
-      # ── SARIF Artifact 보관 (30일) ──
+      # 원본 SARIF를 Artifact로 보관
       - name: Upload SARIF as Artifact
         uses: actions/upload-artifact@v4
         if: always()
@@ -310,7 +178,8 @@ jobs:
           path: sarif-results/**/*.sarif
           retention-days: 30
 
-      # ── Actions Summary 출력 ──
+      # ── Actions Summary 생성 ──
+      # Code Scanning과 맞추기 위해 rule + 파일 + 라인 기준으로 dedup 집계
       - name: Generate Analysis Summary
         if: always()
         shell: bash
@@ -338,19 +207,27 @@ jobs:
           with open(sarif_path) as f:
               data = json.load(f)
 
+          # CodeQL rule properties에서 실제 severity를 읽음 (Code Scanning과 동일)
+          def get_severity(rule_props):
+              ss = rule_props.get("security-severity")
+              if ss is not None:
+                  try:
+                      score = float(ss)
+                      if score >= 9.0: return "Critical"
+                      if score >= 7.0: return "High"
+                      if score >= 4.0: return "Medium"
+                      return "Low"
+                  except (ValueError, TypeError):
+                      pass
 
-          # SARIF level → Code Scanning 표기와 동일한 severity 매핑
-          def map_severity(level):
-              level = (level or 'warning').lower()
-              if level == 'error':   return 'Error'
-              if level == 'warning': return 'Warning'
-              if level == 'note':    return 'Note'
-              return 'Note'
+              ps = rule_props.get("problem.severity", "")
+              if ps == "error":          return "Error"
+              if ps == "warning":        return "Warning"
+              if ps == "recommendation": return "Note"
+              return "Warning"
 
-          # Code Scanning은 같은 rule + 같은 파일:라인 을 dedup 처리함
-          # Summary도 동일하게 dedup하여 카운트를 맞춤
           seen = set()
-          sev = {'Error': 0, 'Warning': 0, 'Note': 0}
+          sev = {}
           rules, cwes, files = {}, set(), {}
 
           for run in data.get('runs', []):
@@ -363,8 +240,9 @@ jobs:
 
               for res in run.get('results', []):
                   rid = res.get('ruleId', '?')
+                  ri = tr.get(rid, {})
 
-                  # 첫 번째 location에서 파일:라인 추출
+                  # 첫 번째 location 기준으로 파일/라인 추출
                   uri, line = '', ''
                   locs = res.get('locations', [])
                   if locs:
@@ -372,13 +250,13 @@ jobs:
                       uri = pl.get('artifactLocation', {}).get('uri', '')
                       line = str(pl.get('region', {}).get('startLine', ''))
 
-                  # dedup: 같은 rule + 파일 + 라인은 1건으로 카운트
+                  # 같은 rule + 파일 + 라인은 1건으로 집계
                   dedup_key = (rid, uri, line)
                   if dedup_key in seen:
                       continue
                   seen.add(dedup_key)
 
-                  severity = map_severity(res.get('level'))
+                  severity = get_severity(ri.get('properties', {}))
                   sev[severity] = sev.get(severity, 0) + 1
 
                   if not hide_rule_id:
@@ -387,7 +265,6 @@ jobs:
                   if uri:
                       files[uri] = files.get(uri, 0) + 1
 
-                  ri = tr.get(rid, {})
                   for t in ri.get('properties', {}).get('tags', []):
                       if t.startswith('external/cwe/cwe-'):
                           cwes.add(t.replace('external/cwe/', '').upper())
@@ -399,8 +276,12 @@ jobs:
           print(f'> **{tot}** findings | **{len(files)}** files | **{unique_rules}** rules | **{len(cwes)}** CWEs\n')
           print('| Severity | Count | % |')
           print('|----------|-------|---|')
-          for sv in ['Error','Warning','Note']:
-              c = sev.get(sv, 0); p = c/tot*100 if tot else 0
+          sev_order = ['Critical', 'High', 'Error', 'Medium', 'Warning', 'Low', 'Note']
+          for sv in sev_order:
+              c = sev.get(sv, 0)
+              if c == 0:
+                  continue
+              p = c / tot * 100 if tot else 0
               print(f'| {sv} | {c} | {p:.1f}% |')
           print(f'| **Total** | **{tot}** | |\n')
 
@@ -408,14 +289,14 @@ jobs:
               print('### Rules (Top 20)')
               print('| # | Rule | Count |')
               print('|---|------|-------|')
-              for i,(r,c) in enumerate(sorted(rules.items(), key=lambda x:-x[1])[:20],1):
+              for i, (r, c) in enumerate(sorted(rules.items(), key=lambda x: -x[1])[:20], 1):
                   print(f'| {i} | `{r}` | {c} |')
               print()
 
           if cwes:
               print(f'### CWEs ({len(cwes)})')
               for c in sorted(cwes):
-                  n = c.replace('CWE-','')
+                  n = c.replace('CWE-', '')
                   print(f'- [{c}](https://cwe.mitre.org/data/definitions/{n}.html)')
               print()
 
@@ -423,7 +304,7 @@ jobs:
               print('### Top Files')
               print('| # | File | Count |')
               print('|---|------|-------|')
-              for i,(f,c) in enumerate(sorted(files.items(), key=lambda x:-x[1])[:10],1):
+              for i, (f, c) in enumerate(sorted(files.items(), key=lambda x: -x[1])[:10], 1):
                   print(f'| {i} | `{f.split("/")[-1]}` | {c} |')
           PYEOF
             echo "---" >> $GITHUB_STEP_SUMMARY
@@ -431,4 +312,3 @@ jobs:
           else
             echo "No SARIF results found." >> $GITHUB_STEP_SUMMARY
           fi
-
