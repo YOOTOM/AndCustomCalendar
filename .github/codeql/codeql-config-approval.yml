@@ -1,9 +1,4 @@
-# ╔══════════════════════════════════════════════════════════════════╗
-# ║  CodeQL Config - 인허가 제출용 (approval)                       ║
-# ║  - 인허가 심사에 불필요한 규칙은 query-filters로 제외             ║
-# ║  - 참조: codeql.yml > STEP 6 > config-file                      ║
-# ╚══════════════════════════════════════════════════════════════════╝
-
+# CodeQL Config - 인허가 제출용 (approval)
 name: "CodeQL Config - ATsens Android (approval)"
 
 # ── Query Pack ──
@@ -13,26 +8,22 @@ queries:
 
 # ── query-filters: 규칙 제외 필터 ──
 #
-# ■ 동작 원리
+# 동작 원리
 #   exclude에 넣으면 → 쿼리 실행 안 됨 → SARIF에 결과 없음 → "Fixed"
 #   exclude에서 빼면 → 쿼리 다시 실행 → SARIF에 결과 포함  → "Open"
 #
-# ■ 제외 방법
+# 제외 방법
 #   1) Rule ID:   exclude: {id: "java/rule-id"}
 #   2) CWE 태그:  exclude: {tags: "external/cwe/cwe-XXX"}
 #   3) severity:  exclude: {severity: "recommendation"}
 #   4) 정규식:    exclude: {id: /java\/log-.*/}
 #
-# ■ Rule ID 확인
+# Rule ID 확인
 #   internal 모드 실행 → Actions Summary의 Rules 테이블
 #   또는 GitHub Security > Code Scanning 항목에서 확인
 query-filters:
   - exclude:
       id: java/android/debuggable-attribute-enabled
-
-  # ─── 추가 제외 시 아래에 추가 ───
-  # - exclude:
-  #     id: java/some-other-rule
 
 # ── paths-ignore: 분석 제외 경로 ──
 paths-ignore:

@@ -1,21 +1,10 @@
-# ╔══════════════════════════════════════════════════════════════════╗
-# ║  CodeQL Config - 내부 개발용 (internal)                         ║
-# ║  - 모든 규칙을 필터 없이 전부 표시                                ║
-# ║  - 참조: codeql.yml > STEP 6 > config-file                      ║
-# ╚══════════════════════════════════════════════════════════════════╝
-
+# CodeQL Config - 내부 개발용 (internal)
 name: "CodeQL Config - ATsens Android (internal)"
 
 # ── Query Pack ──
 queries:
   - uses: security-and-quality
   - uses: security-extended
-
-# ── query-filters: 내부용은 필터 없음 (모든 규칙 표시) ──
-# 특정 규칙을 제외하려면 approval config 참고
-# query-filters:
-#   - exclude:
-#       id: java/unused-import
 
 # ── paths-ignore: 분석 제외 경로 ──
 paths-ignore:

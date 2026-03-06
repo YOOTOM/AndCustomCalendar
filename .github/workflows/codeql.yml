@@ -1,10 +1,5 @@
-# ╔══════════════════════════════════════════════════════════════════╗
-# ║  CodeQL 정적 코드 분석 Workflow                                  ║
-# ║  - 결과: GitHub Security > Code Scanning                        ║
-# ║  - approval 모드: Rule ID 숨김 + HTML 대시보드 + 규칙 필터링     ║
-# ╚══════════════════════════════════════════════════════════════════╝
-
-name: "CodeQL (ATsens Android)"
+#CodeQL 정적 코드 분석 Workflow
+name: "CodeQL (ATsens)"
 
 on:
   push:
@@ -47,11 +42,11 @@ jobs:
 
     steps:
 
-      # ── STEP 1: 소스 코드 체크아웃 ──
+      # ── 소스 코드 체크아웃 ──
       - name: Checkout repository
         uses: actions/checkout@v4
 
-      # ── STEP 2: 프로파일 결정 ──
+      # ── 프로파일 결정 ──
       # 수동 실행 → 선택한 profile / 자동 실행 → approval
       - name: Resolve profile
         id: profile
@@ -69,14 +64,14 @@ jobs:
             echo "hide_rule_id=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # ── STEP 2-1: 디버그 출력 ──
+      # ── 디버그 출력 ──
       - name: Debug selected profile
         shell: bash
         run: |
           echo "event=${{ github.event_name }} | profile=${{ steps.profile.outputs.value }} | hide_rule_id=${{ steps.profile.outputs.hide_rule_id }}"
           echo "config=./.github/codeql/codeql-config-${{ steps.profile.outputs.value }}.yml"
 
-      # ── STEP 3: JDK 17 설치 ──
+      # ── JDK 17 설치 ──
       - name: Set up JDK 17
         uses: actions/setup-java@v4
         with:
@@ -84,15 +79,15 @@ jobs:
           java-version: "17"
           cache: gradle
 
-      # ── STEP 4: Android SDK 설치 ──
+      # ── Android SDK 설치 ──
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
 
-      # ── STEP 5: SDK 컴포넌트 설치 (compileSdk에 맞춤) ──
+      # ── SDK 컴포넌트 설치 (compileSdk에 맞춤) ──
       - name: Install Android SDK components
         run: sdkmanager "platforms;android-34"
 
-      # ── STEP 6: CodeQL 초기화 ──
+      # ── CodeQL 초기화 ──
       # config-file로 profile별 설정(query-filters 등) 로드
       - name: Initialize CodeQL
         uses: github/codeql-action/init@v4
@@ -101,7 +96,7 @@ jobs:
           build-mode: ${{ matrix.build-mode }}
           config-file: ./.github/codeql/codeql-config-${{ steps.profile.outputs.value }}.yml
 
-      # ── STEP 7: Gradle 빌드 ──
+      # ── Gradle 빌드 ──
       - name: Build (Gradle)
         if: matrix.build-mode == 'manual'
         shell: bash
@@ -109,7 +104,7 @@ jobs:
           chmod +x ./gradlew
           ./gradlew clean assembleDebug --no-daemon
 
-      # ── STEP 8: CodeQL 분석 ──
+      # ── CodeQL 분석 ──
       # upload: never → 디버그 확인 후 STEP 8-2에서 수동 업로드
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
@@ -118,7 +113,7 @@ jobs:
           output: sarif-results
           upload: never
 
-      # ── STEP 8-1: (디버그) SARIF Rule ID 출력 ──
+      # ── (디버그) SARIF Rule ID 출력 ──
       # query-filters exclude가 제대로 동작했는지 로그에서 확인
       - name: Debug SARIF contents
         if: always()
@@ -142,7 +137,7 @@ jobs:
               print(f"[Debug] Total results: {len(run.get('results',[]))}")
           PYEOF
 
-      # ── STEP 8-2: SARIF 업로드 ──
+      # ── SARIF 업로드 ──
       # exclude된 규칙 → SARIF에 없음 → 이전 alert 자동 "Fixed"
       # exclude에서 뺀 규칙 → SARIF에 있음 → alert 다시 "Open"
       - name: Upload SARIF to Code Scanning
@@ -151,7 +146,7 @@ jobs:
           sarif_file: sarif-results
           category: "/${{ steps.profile.outputs.value }}/language:${{ matrix.language }}"
 
-      # ── STEP 8-3: 이전 category 잔존 alert → "Fixed" 전환 ──
+      # ── 이전 category 잔존 alert → "Fixed" 전환 ──
       # 이전에 다른 category로 올라간 alert를 빈 SARIF로 덮어 Fixed 처리
       - name: Supersede stale analyses
         if: steps.profile.outputs.value == 'approval'
@@ -182,7 +177,7 @@ jobs:
           sarif_file: sarif-empty/empty.sarif
           category: "/language:${{ matrix.language }}"
 
-      # ── STEP 9: 인허가용 HTML 대시보드 ──
+      # ── HTML 대시보드 ──
       # SARIF → Rule ID 없는 HTML 보고서 생성 → GitHub Pages 배포
       - name: Generate Approval Dashboard
         if: steps.profile.outputs.value == 'approval'
@@ -290,7 +285,7 @@ jobs:
           print("Generated site/index.html")
           PY
 
-      # ── STEP 10–12: GitHub Pages 배포 ──
+      # ── GitHub Pages 배포 ──
       - name: Configure Pages
         if: steps.profile.outputs.value == 'approval'
         uses: actions/configure-pages@v5
@@ -306,7 +301,7 @@ jobs:
         id: deployment
         uses: actions/deploy-pages@v4
 
-      # ── STEP 13: SARIF Artifact 보관 (30일) ──
+      # ── SARIF Artifact 보관 (30일) ──
       - name: Upload SARIF as Artifact
         uses: actions/upload-artifact@v4
         if: always()
@@ -315,7 +310,7 @@ jobs:
           path: sarif-results/**/*.sarif
           retention-days: 30
 
-      # ── STEP 14: Actions Summary 출력 ──
+      # ── Actions Summary 출력 ──
       - name: Generate Analysis Summary
         if: always()
         shell: bash
@@ -343,7 +338,19 @@ jobs:
           with open(sarif_path) as f:
               data = json.load(f)
 
-          sev = {'error': 0, 'warning': 0, 'note': 0, 'none': 0}
+
+          # SARIF level → Code Scanning 표기와 동일한 severity 매핑
+          def map_severity(level):
+              level = (level or 'warning').lower()
+              if level == 'error':   return 'Error'
+              if level == 'warning': return 'Warning'
+              if level == 'note':    return 'Note'
+              return 'Note'
+
+          # Code Scanning은 같은 rule + 같은 파일:라인 을 dedup 처리함
+          # Summary도 동일하게 dedup하여 카운트를 맞춤
+          seen = set()
+          sev = {'Error': 0, 'Warning': 0, 'Note': 0}
           rules, cwes, files = {}, set(), {}
 
           for run in data.get('runs', []):
@@ -355,22 +362,30 @@ jobs:
                       tr[rid_key] = r
 
               for res in run.get('results', []):
-                  # SARIF 스펙: level 없으면 기본값 "warning"
-                  lv = res.get('level') or 'warning'
-                  if lv not in sev:
-                      lv = 'none'
-                  sev[lv] += 1
-
                   rid = res.get('ruleId', '?')
+
+                  # 첫 번째 location에서 파일:라인 추출
+                  uri, line = '', ''
+                  locs = res.get('locations', [])
+                  if locs:
+                      pl = locs[0].get('physicalLocation', {})
+                      uri = pl.get('artifactLocation', {}).get('uri', '')
+                      line = str(pl.get('region', {}).get('startLine', ''))
+
+                  # dedup: 같은 rule + 파일 + 라인은 1건으로 카운트
+                  dedup_key = (rid, uri, line)
+                  if dedup_key in seen:
+                      continue
+                  seen.add(dedup_key)
+
+                  severity = map_severity(res.get('level'))
+                  sev[severity] = sev.get(severity, 0) + 1
+
                   if not hide_rule_id:
                       rules[rid] = rules.get(rid, 0) + 1
 
-                  # 파일 카운트: result당 첫 번째 location만 (중복 방지)
-                  locs = res.get('locations', [])
-                  if locs:
-                      u = locs[0].get('physicalLocation', {}).get('artifactLocation', {}).get('uri', '')
-                      if u:
-                          files[u] = files.get(u, 0) + 1
+                  if uri:
+                      files[uri] = files.get(uri, 0) + 1
 
                   ri = tr.get(rid, {})
                   for t in ri.get('properties', {}).get('tags', []):
@@ -378,15 +393,15 @@ jobs:
                           cwes.add(t.replace('external/cwe/', '').upper())
 
           tot = sum(sev.values())
-          unique_rules = len({res.get('ruleId', '?') for run in data.get('runs', []) for res in run.get('results', [])}) if hide_rule_id else len(rules)
+          unique_rules = len({k[0] for k in seen})
 
           print(f'### Summary')
           print(f'> **{tot}** findings | **{len(files)}** files | **{unique_rules}** rules | **{len(cwes)}** CWEs\n')
           print('| Severity | Count | % |')
           print('|----------|-------|---|')
-          for lv in ['error','warning','note','none']:
-              c = sev.get(lv, 0); p = c/tot*100 if tot else 0
-              print(f'| {lv.upper()} | {c} | {p:.1f}% |')
+          for sv in ['Error','Warning','Note']:
+              c = sev.get(sv, 0); p = c/tot*100 if tot else 0
+              print(f'| {sv} | {c} | {p:.1f}% |')
           print(f'| **Total** | **{tot}** | |\n')
 
           if (not hide_rule_id) and rules:
