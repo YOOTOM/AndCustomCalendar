@@ -96,8 +96,11 @@ query-filters:
   # - Debug 빌드에서는 의도적으로 활성화되는 설정
   # - Release 빌드에서는 Gradle이 자동으로 false로 설정하므로
   #   실제 출시 APK에는 영향 없음 (인허가 심사와 무관)
+  # - CodeQL 버전/쿼리팩에 따라 Rule ID가 다를 수 있으므로 변형 모두 등록
   - exclude:
       id: java/android/debuggable-attribute-enabled
+  - exclude:
+      id: java/android-debuggable
 
   # ─── 추가 제외가 필요한 경우 아래에 추가 ───
   # - exclude:

@@ -294,6 +294,28 @@ jobs:
           print(f"[Filter] Exclude Severities: {exclude_severities}")
           print(f"[Filter] Exclude Tags: {exclude_tags}")
 
+          def should_exclude_by_id(rid):
+              """Rule ID가 exclude 목록에 해당하는지 확인 (정확 매칭 + 부분 매칭)"""
+              if not rid:
+                  return False
+              # 정확 매칭
+              if rid in exclude_ids:
+                  return True
+              # 부분 매칭: SARIF의 Rule ID가 config의 ID를 포함하거나 그 반대
+              # 예: config에 "java/android/debuggable-attribute-enabled" 가 있고
+              #     SARIF에 "java/android-debuggable" 또는 "java/android/debuggable-attribute-enabled" 등
+              rid_lower = rid.lower()
+              for eid in exclude_ids:
+                  eid_lower = eid.lower()
+                  # Rule ID의 마지막 세그먼트(슬래시 이후)로도 매칭
+                  rid_suffix = rid_lower.rsplit("/", 1)[-1]
+                  eid_suffix = eid_lower.rsplit("/", 1)[-1]
+                  if rid_suffix == eid_suffix:
+                      return True
+                  if rid_lower in eid_lower or eid_lower in rid_lower:
+                      return True
+              return False
+
           # ── severity 매핑 (SARIF level → CodeQL severity) ──
           level_to_severity = {
               "error": "error",
@@ -304,16 +326,22 @@ jobs:
 
           # ── 모든 SARIF 파일 처리 ──
           for sarif_file in glob.glob("sarif-results/**/*.sarif", recursive=True):
-              print(f"[Filter] Processing: {sarif_file}")
+              print(f"\n[Filter] Processing: {sarif_file}")
               with open(sarif_file) as f:
                   data = json.load(f)
 
               total_removed = 0
+              removed_rule_ids = set()
+
               for run in data.get("runs", []):
                   rules_by_id = {}
                   for r in run.get("tool", {}).get("driver", {}).get("rules", []):
                       if isinstance(r, dict):
                           rules_by_id[r.get("id", "")] = r
+
+                  # ── 디버그: SARIF에 있는 모든 고유 Rule ID 출력 ──
+                  all_rids = set(res.get("ruleId", "(none)") for res in run.get("results", []))
+                  print(f"[Filter] All Rule IDs in SARIF ({len(all_rids)}): {sorted(all_rids)}")
 
                   original = run.get("results", [])
                   filtered = []
@@ -322,32 +350,47 @@ jobs:
                       level = res.get("level", "none")
                       mapped_sev = level_to_severity.get(level, level)
 
-                      # Rule ID로 제외
-                      if rid in exclude_ids:
+                      # Rule ID로 제외 (정확 + 부분 매칭)
+                      if should_exclude_by_id(rid):
                           total_removed += 1
+                          removed_rule_ids.add(rid)
                           continue
 
                       # Severity로 제외
                       if mapped_sev in exclude_severities:
                           total_removed += 1
+                          removed_rule_ids.add(f"{rid} (severity={mapped_sev})")
                           continue
 
                       # Tag로 제외
                       rule_info = rules_by_id.get(rid, {})
                       rule_tags = set(rule_info.get("properties", {}).get("tags", []))
-                      if exclude_tags & rule_tags:
+                      matched_tags = exclude_tags & rule_tags
+                      if matched_tags:
                           total_removed += 1
+                          removed_rule_ids.add(f"{rid} (tags={matched_tags})")
                           continue
 
                       filtered.append(res)
 
                   run["results"] = filtered
 
+                  # ── rules 배열에서도 제외된 rule 정의 제거 (SARIF 완전 클린업) ──
+                  kept_rids = set(res.get("ruleId", "") for res in filtered)
+                  driver = run.get("tool", {}).get("driver", {})
+                  if "rules" in driver:
+                      driver["rules"] = [
+                          r for r in driver["rules"]
+                          if isinstance(r, dict) and r.get("id", "") in kept_rids
+                      ]
+
               with open(sarif_file, "w") as f:
                   json.dump(data, f, indent=2)
 
-              print(f"[Filter] Removed {total_removed} results from {sarif_file}")
-              print(f"[Filter] Remaining results: {sum(len(r.get('results',[])) for r in data.get('runs',[]))}")
+              print(f"[Filter] Removed {total_removed} results")
+              print(f"[Filter] Removed Rule IDs: {sorted(removed_rule_ids)}")
+              remaining = sum(len(r.get("results", [])) for r in data.get("runs", []))
+              print(f"[Filter] Remaining results: {remaining}")
 
           PYEOF
 
@@ -362,6 +405,99 @@ jobs:
         with:
           sarif_file: sarif-results
           category: "/${{ steps.profile.outputs.value }}/language:${{ matrix.language }}"
+
+      # ══════════════════════════════════════════
+      # STEP 8-3: 이전 실행의 잔존 alert 자동 Dismiss
+      # ══════════════════════════════════════════
+      # [TAG: Dismiss stale alerts]
+      # - 이전 실행(다른 category 또는 필터링 전)에서 업로드된 alert가
+      #   Code Scanning에 남아 있을 수 있음
+      # - GitHub API로 exclude된 Rule ID의 open alert를 자동 dismiss
+      # - 이렇게 해야 "이전에 올라간 debuggable-attribute-enabled" 등이 사라짐
+      # - dismissed_reason: "won't fix" (인허가 심사에서 패스 처리)
+      - name: Dismiss excluded rule alerts via API
+        if: steps.profile.outputs.value == 'approval'
+        shell: bash
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          pip install pyyaml
+          python3 << 'PYEOF'
+          import yaml, os, json, subprocess
+
+          config_path = ".github/codeql/codeql-config-approval.yml"
+          exclude_ids = set()
+
+          if os.path.exists(config_path):
+              with open(config_path) as f:
+                  cfg = yaml.safe_load(f)
+              for filt in cfg.get("query-filters", []):
+                  exc = filt.get("exclude", {})
+                  if "id" in exc:
+                      exclude_ids.add(exc["id"])
+
+          if not exclude_ids:
+              print("[Dismiss] No exclude IDs configured, skipping.")
+              exit(0)
+
+          repo = os.environ.get("GITHUB_REPOSITORY", "")
+          token = os.environ.get("GH_TOKEN", "")
+          api_base = f"https://api.github.com/repos/{repo}/code-scanning/alerts"
+          headers = [
+              "-H", "Accept: application/vnd.github+json",
+              "-H", f"Authorization: Bearer {token}",
+              "-H", "X-GitHub-Api-Version: 2022-11-28"
+          ]
+
+          print(f"[Dismiss] Checking alerts for repo: {repo}")
+          print(f"[Dismiss] Exclude Rule IDs: {exclude_ids}")
+
+          # 페이지네이션으로 모든 open alert 조회
+          page = 1
+          dismissed_count = 0
+          while True:
+              result = subprocess.run(
+                  ["curl", "-s"] + headers + [f"{api_base}?state=open&per_page=100&page={page}"],
+                  capture_output=True, text=True
+              )
+              alerts = json.loads(result.stdout) if result.stdout.strip().startswith("[") else []
+              if not alerts:
+                  break
+
+              for alert in alerts:
+                  rule_id = alert.get("rule", {}).get("id", "")
+                  alert_num = alert.get("number", 0)
+
+                  # 정확 매칭 또는 접미사 매칭
+                  should_dismiss = False
+                  rule_suffix = rule_id.rsplit("/", 1)[-1].lower() if rule_id else ""
+                  for eid in exclude_ids:
+                      eid_suffix = eid.rsplit("/", 1)[-1].lower()
+                      if rule_id == eid or rule_suffix == eid_suffix:
+                          should_dismiss = True
+                          break
+
+                  if should_dismiss:
+                      print(f"[Dismiss] Dismissing alert #{alert_num} (rule: {rule_id})")
+                      dismiss_result = subprocess.run(
+                          ["curl", "-s", "-X", "PATCH"] + headers +
+                          ["-d", json.dumps({
+                              "state": "dismissed",
+                              "dismissed_reason": "won't fix",
+                              "dismissed_comment": "Excluded by approval profile (codeql-config-approval.yml)"
+                          }),
+                          f"{api_base}/{alert_num}"],
+                          capture_output=True, text=True
+                      )
+                      if '"state":"dismissed"' in dismiss_result.stdout:
+                          dismissed_count += 1
+                      else:
+                          print(f"[Dismiss] Warning: {dismiss_result.stdout[:200]}")
+
+              page += 1
+
+          print(f"[Dismiss] Total dismissed: {dismissed_count}")
+          PYEOF
 
       # ══════════════════════════════════════════
       # STEP 9: 인허가용 HTML 대시보드 생성
