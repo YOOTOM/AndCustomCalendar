@@ -407,97 +407,72 @@ jobs:
           category: "/${{ steps.profile.outputs.value }}/language:${{ matrix.language }}"
 
       # ══════════════════════════════════════════
-      # STEP 8-3: 이전 실행의 잔존 alert 자동 Dismiss
+      # STEP 8-3: 이전 category의 잔존 alert를 "Fixed"로 전환
       # ══════════════════════════════════════════
-      # [TAG: Dismiss stale alerts]
-      # - 이전 실행(다른 category 또는 필터링 전)에서 업로드된 alert가
-      #   Code Scanning에 남아 있을 수 있음
-      # - GitHub API로 exclude된 Rule ID의 open alert를 자동 dismiss
-      # - 이렇게 해야 "이전에 올라간 debuggable-attribute-enabled" 등이 사라짐
-      # - dismissed_reason: "won't fix" (인허가 심사에서 패스 처리)
-      - name: Dismiss excluded rule alerts via API
+      # [TAG: Supersede stale analyses]
+      # ■ 왜 필요한가?
+      #   - 이전에 다른 category (예: /internal/...) 또는 필터링 전 category로
+      #     업로드된 alert가 Code Scanning에 "Open" 상태로 남아 있을 수 있음
+      #   - GitHub Code Scanning은 alert를 "삭제"하지 않음
+      #     → Dismiss = "Closed" 상태 (리스트의 Closed 탭에 잔존)
+      #     → 같은 category로 해당 결과가 없는 SARIF를 업로드하면 "Fixed" 상태
+      # ■ 방법:
+      #   - 이전에 사용했을 수 있는 모든 category에 대해
+      #     빈 결과의 SARIF를 업로드하여 "Fixed" 상태로 자동 전환
+      #   - 이것이 "Closed(Dismissed)"가 아닌 "Fixed"를 만드는 유일한 방법
+      - name: Supersede stale analyses (make old alerts "Fixed")
         if: steps.profile.outputs.value == 'approval'
         shell: bash
-        env:
-          GH_TOKEN: ${{ github.token }}
         run: |
-          pip install pyyaml
-          python3 << 'PYEOF'
-          import yaml, os, json, subprocess
+          # ── 이전에 사용했을 수 있는 다른 category 목록 ──
+          # 현재 category: /approval/language:java-kotlin
+          # 이전 가능한 category들:
+          STALE_CATEGORIES=(
+            "/internal/language:${{ matrix.language }}"
+            "/language:${{ matrix.language }}"
+          )
 
-          config_path = ".github/codeql/codeql-config-approval.yml"
-          exclude_ids = set()
+          # ── 빈 결과의 유효한 SARIF 파일 생성 ──
+          mkdir -p sarif-empty
+          cat > sarif-empty/empty.sarif << 'SARIF_EOF'
+          {
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json",
+            "version": "2.1.0",
+            "runs": [
+              {
+                "tool": {
+                  "driver": {
+                    "name": "CodeQL",
+                    "version": "0.0.0",
+                    "rules": []
+                  }
+                },
+                "results": []
+              }
+            ]
+          }
+          SARIF_EOF
 
-          if os.path.exists(config_path):
-              with open(config_path) as f:
-                  cfg = yaml.safe_load(f)
-              for filt in cfg.get("query-filters", []):
-                  exc = filt.get("exclude", {})
-                  if "id" in exc:
-                      exclude_ids.add(exc["id"])
+          echo "[Supersede] Empty SARIF created at sarif-empty/empty.sarif"
+          echo "[Supersede] Will upload to stale categories: ${STALE_CATEGORIES[*]}"
 
-          if not exclude_ids:
-              print("[Dismiss] No exclude IDs configured, skipping.")
-              exit(0)
+      # 이전 /internal/ category로 빈 SARIF 업로드 → 해당 category의 alert가 "Fixed"로 전환
+      - name: Upload empty SARIF to stale category (internal)
+        if: steps.profile.outputs.value == 'approval'
+        uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true
+        with:
+          sarif_file: sarif-empty/empty.sarif
+          category: "/internal/language:${{ matrix.language }}"
 
-          repo = os.environ.get("GITHUB_REPOSITORY", "")
-          token = os.environ.get("GH_TOKEN", "")
-          api_base = f"https://api.github.com/repos/{repo}/code-scanning/alerts"
-          headers = [
-              "-H", "Accept: application/vnd.github+json",
-              "-H", f"Authorization: Bearer {token}",
-              "-H", "X-GitHub-Api-Version: 2022-11-28"
-          ]
-
-          print(f"[Dismiss] Checking alerts for repo: {repo}")
-          print(f"[Dismiss] Exclude Rule IDs: {exclude_ids}")
-
-          # 페이지네이션으로 모든 open alert 조회
-          page = 1
-          dismissed_count = 0
-          while True:
-              result = subprocess.run(
-                  ["curl", "-s"] + headers + [f"{api_base}?state=open&per_page=100&page={page}"],
-                  capture_output=True, text=True
-              )
-              alerts = json.loads(result.stdout) if result.stdout.strip().startswith("[") else []
-              if not alerts:
-                  break
-
-              for alert in alerts:
-                  rule_id = alert.get("rule", {}).get("id", "")
-                  alert_num = alert.get("number", 0)
-
-                  # 정확 매칭 또는 접미사 매칭
-                  should_dismiss = False
-                  rule_suffix = rule_id.rsplit("/", 1)[-1].lower() if rule_id else ""
-                  for eid in exclude_ids:
-                      eid_suffix = eid.rsplit("/", 1)[-1].lower()
-                      if rule_id == eid or rule_suffix == eid_suffix:
-                          should_dismiss = True
-                          break
-
-                  if should_dismiss:
-                      print(f"[Dismiss] Dismissing alert #{alert_num} (rule: {rule_id})")
-                      dismiss_result = subprocess.run(
-                          ["curl", "-s", "-X", "PATCH"] + headers +
-                          ["-d", json.dumps({
-                              "state": "dismissed",
-                              "dismissed_reason": "won't fix",
-                              "dismissed_comment": "Excluded by approval profile (codeql-config-approval.yml)"
-                          }),
-                          f"{api_base}/{alert_num}"],
-                          capture_output=True, text=True
-                      )
-                      if '"state":"dismissed"' in dismiss_result.stdout:
-                          dismissed_count += 1
-                      else:
-                          print(f"[Dismiss] Warning: {dismiss_result.stdout[:200]}")
-
-              page += 1
-
-          print(f"[Dismiss] Total dismissed: {dismissed_count}")
-          PYEOF
+      # 이전 profile 없는 category로 빈 SARIF 업로드
+      - name: Upload empty SARIF to stale category (legacy)
+        if: steps.profile.outputs.value == 'approval'
+        uses: github/codeql-action/upload-sarif@v4
+        continue-on-error: true
+        with:
+          sarif_file: sarif-empty/empty.sarif
+          category: "/language:${{ matrix.language }}"
 
       # ══════════════════════════════════════════
       # STEP 9: 인허가용 HTML 대시보드 생성
