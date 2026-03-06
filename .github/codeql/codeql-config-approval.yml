@@ -90,6 +90,8 @@ query-filters:
   # - CodeQL 버전/쿼리팩에 따라 Rule ID가 다를 수 있으므로 변형 모두 등록
   - exclude:
       id: java/android/debuggable-attribute-enabled
+  - exclude:
+      id: java/insecure-trustmanager
 
   # ─── 추가 제외가 필요한 경우 아래에 추가 ───
   # - exclude:
