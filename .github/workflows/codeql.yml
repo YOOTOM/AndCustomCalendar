@@ -347,16 +347,31 @@ jobs:
           rules, cwes, files = {}, set(), {}
 
           for run in data.get('runs', []):
-              tr = {r['id']: r for r in run.get('tool', {}).get('driver', {}).get('rules', [])}
+              driver_rules = run.get('tool', {}).get('driver', {}).get('rules', [])
+              tr = {}
+              for r in driver_rules:
+                  rid_key = r.get('id')
+                  if rid_key:
+                      tr[rid_key] = r
+
               for res in run.get('results', []):
-                  lv = res.get('level', 'none')
-                  sev[lv] = sev.get(lv, 0) + 1
+                  # SARIF 스펙: level 없으면 기본값 "warning"
+                  lv = res.get('level') or 'warning'
+                  if lv not in sev:
+                      lv = 'none'
+                  sev[lv] += 1
+
                   rid = res.get('ruleId', '?')
                   if not hide_rule_id:
                       rules[rid] = rules.get(rid, 0) + 1
-                  for loc in res.get('locations', []):
-                      u = loc.get('physicalLocation', {}).get('artifactLocation', {}).get('uri', '')
-                      if u: files[u] = files.get(u, 0) + 1
+
+                  # 파일 카운트: result당 첫 번째 location만 (중복 방지)
+                  locs = res.get('locations', [])
+                  if locs:
+                      u = locs[0].get('physicalLocation', {}).get('artifactLocation', {}).get('uri', '')
+                      if u:
+                          files[u] = files.get(u, 0) + 1
+
                   ri = tr.get(rid, {})
                   for t in ri.get('properties', {}).get('tags', []):
                       if t.startswith('external/cwe/cwe-'):

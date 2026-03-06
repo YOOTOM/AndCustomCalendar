@@ -27,46 +27,9 @@ queries:
 #   internal 모드 실행 → Actions Summary의 Rules 테이블
 #   또는 GitHub Security > Code Scanning 항목에서 확인
 query-filters:
-
-  # [FILTER 1] 빈 메서드 — 콜백/abstract 구현 등 의도적 빈 블록
-  - exclude:
-      id: java/empty-block
-
-  # [FILTER 2] 미사용 import — lint 수준 품질 이슈
-  - exclude:
-      id: java/unused-import
-
-  # [FILTER 3] deprecated API 호출 — 레거시 호환용
-  - exclude:
-      id: java/deprecated-call
-
-  # [FILTER 4] 미사용 변수 — 보안 위험 없음
-  - exclude:
-      id: java/unused-variable
-
-  # [FILTER 5] 도달 불가 코드 — 실행 안 되므로 보안 영향 없음
-  - exclude:
-      id: java/dead-code
-
-  # [FILTER 6] severity: recommendation 전체 — 가장 낮은 심각도
-  - exclude:
-      severity: recommendation
-
-  # [FILTER 7] CWE-561 (Dead Code) 태그 — FILTER 5 보완
-  - exclude:
-      tags: "external/cwe/cwe-561"
-
-  # [FILTER 8] android:debuggable="true" — Debug 빌드 전용, Release에서 자동 false
   - exclude:
       id: java/android/debuggable-attribute-enabled
 
-  # [FILTER 9] 안전하지 않은 TrustManager — 테스트/개발용 자체 인증서 허용
-  - exclude:
-      id: java/insecure-trustmanager
-
-  - exclude:
-      id: java/diagnostic/database-quality
-      
   # ─── 추가 제외 시 아래에 추가 ───
   # - exclude:
   #     id: java/some-other-rule
