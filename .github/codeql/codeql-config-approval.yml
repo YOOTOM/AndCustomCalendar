@@ -25,31 +25,22 @@ queries:
 # [TAG: query-filters] 규칙 제외 필터 (인허가 심사용)
 # ──────────────────────────────────────────────
 # 소나큐브의 "Won't Fix" / "False Positive" 와 유사한 기능입니다.
-# 'exclude' 로 지정된 규칙은 결과에서 완전히 제거됩니다.
 #
-# ■ 2단계 필터링 구조:
-#   1차) query-filters → CodeQL 엔진 수준에서 쿼리 실행 자체를 제외
-#   2차) SARIF 후처리 → codeql.yml STEP 8-1에서 이 파일의 exclude 목록을
-#        읽어 SARIF 파일에서 결과를 물리적으로 삭제 후 업로드
-#   → 1차에서 누락되더라도 2차에서 확실히 제거됨 (이중 안전장치)
+# ■ 동작 원리:
+#   - exclude에 넣으면 → 쿼리 자체가 실행 안 됨 → SARIF에 결과 없음
+#     → 같은 category로 업로드 시 이전 alert가 자동 "Fixed" 처리
+#   - exclude에서 빼면 → 쿼리가 다시 실행됨 → SARIF에 결과 포함
+#     → 업로드 시 alert가 다시 "Open" 됨
 #
 # ■ 규칙 제외 방법 4가지:
 #   1) Rule ID로 제외:    exclude: {id: "java/rule-id-here"}
 #   2) CWE 태그로 제외:   exclude: {tags: "external/cwe/cwe-XXX"}
 #   3) severity로 제외:   exclude: {severity: "recommendation"}
 #   4) 정규식 패턴 제외:  exclude: {id: /java\/log-.*/}
-#      ※ 정규식은 query-filters에서만 동작, SARIF 후처리에서는 미지원
-#
-# ■ 새 규칙을 패스시키려면:
-#   아래 query-filters 목록에 exclude 항목을 추가하세요.
 #
 # ■ Rule ID 확인 방법:
 #   internal 모드로 실행 → Actions Summary의 Rules 테이블에서 확인
 #   또는 GitHub Security > Code Scanning에서 각 항목의 Rule ID 확인
-#
-# ■ 이전 실행 결과가 남아있는 경우:
-#   GitHub Security > Code Scanning에서 해당 항목 선택 후
-#   "Dismiss alert" → "Won't fix" 또는 "False positive"로 닫기
 # ──────────────────────────────────────────────
 query-filters:
   # --- 인허가 심사에서 일반적으로 문제없는 항목 제외 ---
@@ -99,10 +90,6 @@ query-filters:
   # - CodeQL 버전/쿼리팩에 따라 Rule ID가 다를 수 있으므로 변형 모두 등록
   - exclude:
       id: java/android/debuggable-attribute-enabled
-  - exclude:
-      id: java/android-debuggable
-  - exclude:
-      id: java/command-line-injection
 
   # ─── 추가 제외가 필요한 경우 아래에 추가 ───
   # - exclude:
