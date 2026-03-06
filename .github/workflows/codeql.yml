@@ -237,23 +237,131 @@ jobs:
           ./gradlew clean assembleDebug --no-daemon
 
       # ══════════════════════════════════════════
-      # STEP 8: CodeQL 분석 실행 + 결과 업로드
+      # STEP 8: CodeQL 분석 실행 (업로드는 후처리 후 수동으로)
       # ══════════════════════════════════════════
       # [TAG: github/codeql-action/analyze@v4]
       # - 빌드된 코드에 대해 보안/품질 분석 수행
       # - 결과를 SARIF(Static Analysis Results Interchange Format) 형식으로 생성
       # - category: GitHub Security 대시보드에서 결과 구분용 태그
-      #   → profile별 category 분리로 internal / approval 결과가 섞이지 않게 변경
       # - output: SARIF 파일 저장 디렉토리 (이후 스텝에서 활용)
-      # - 이 스텝이 완료되면 GitHub Security > Code Scanning에 결과 자동 표시
+      # - upload: never → 자동 업로드 비활성화
+      #   ↳ 기본값(always)이면 analyze 완료 즉시 SARIF를 GitHub에 업로드
+      #   ↳ never로 설정하면 STEP 8-1에서 후처리 후 STEP 8-2에서 수동 업로드
+      #   ↳ 이렇게 해야 query-filters로 제외 안 되는 규칙도 SARIF에서 직접 제거 가능
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
-          # [기존 category - profile 구분 없음]
-          # category: "/language:${{ matrix.language }}"
 
           category: "/${{ steps.profile.outputs.value }}/language:${{ matrix.language }}"
           output: sarif-results
+          upload: never
+
+      # ══════════════════════════════════════════
+      # STEP 8-1: SARIF 후처리 (제외 규칙 강제 제거)
+      # ══════════════════════════════════════════
+      # [TAG: Filter SARIF results]
+      # - query-filters만으로 제거되지 않는 규칙을 SARIF 파일에서 직접 삭제
+      # - approval 모드일 때 codeql-config-approval.yml의 exclude 목록을 읽어
+      #   해당 Rule ID의 결과를 SARIF에서 물리적으로 제거
+      # - 제거된 SARIF만 GitHub에 업로드되므로 Code Scanning에 절대 노출 안 됨
+      - name: Filter SARIF results (remove excluded rules)
+        if: steps.profile.outputs.value == 'approval'
+        shell: bash
+        run: |
+          pip install pyyaml
+          python3 << 'PYEOF'
+          import json, glob, yaml, os
+
+          # ── approval config에서 exclude Rule ID 목록 추출 ──
+          config_path = ".github/codeql/codeql-config-approval.yml"
+          exclude_ids = set()
+          exclude_severities = set()
+          exclude_tags = set()
+
+          if os.path.exists(config_path):
+              with open(config_path) as f:
+                  cfg = yaml.safe_load(f)
+              for filt in cfg.get("query-filters", []):
+                  exc = filt.get("exclude", {})
+                  if "id" in exc:
+                      exclude_ids.add(exc["id"])
+                  if "severity" in exc:
+                      exclude_severities.add(exc["severity"])
+                  if "tags" in exc:
+                      exclude_tags.add(exc["tags"])
+
+          print(f"[Filter] Exclude Rule IDs: {exclude_ids}")
+          print(f"[Filter] Exclude Severities: {exclude_severities}")
+          print(f"[Filter] Exclude Tags: {exclude_tags}")
+
+          # ── severity 매핑 (SARIF level → CodeQL severity) ──
+          level_to_severity = {
+              "error": "error",
+              "warning": "warning",
+              "note": "recommendation",
+              "none": "recommendation"
+          }
+
+          # ── 모든 SARIF 파일 처리 ──
+          for sarif_file in glob.glob("sarif-results/**/*.sarif", recursive=True):
+              print(f"[Filter] Processing: {sarif_file}")
+              with open(sarif_file) as f:
+                  data = json.load(f)
+
+              total_removed = 0
+              for run in data.get("runs", []):
+                  rules_by_id = {}
+                  for r in run.get("tool", {}).get("driver", {}).get("rules", []):
+                      if isinstance(r, dict):
+                          rules_by_id[r.get("id", "")] = r
+
+                  original = run.get("results", [])
+                  filtered = []
+                  for res in original:
+                      rid = res.get("ruleId", "")
+                      level = res.get("level", "none")
+                      mapped_sev = level_to_severity.get(level, level)
+
+                      # Rule ID로 제외
+                      if rid in exclude_ids:
+                          total_removed += 1
+                          continue
+
+                      # Severity로 제외
+                      if mapped_sev in exclude_severities:
+                          total_removed += 1
+                          continue
+
+                      # Tag로 제외
+                      rule_info = rules_by_id.get(rid, {})
+                      rule_tags = set(rule_info.get("properties", {}).get("tags", []))
+                      if exclude_tags & rule_tags:
+                          total_removed += 1
+                          continue
+
+                      filtered.append(res)
+
+                  run["results"] = filtered
+
+              with open(sarif_file, "w") as f:
+                  json.dump(data, f, indent=2)
+
+              print(f"[Filter] Removed {total_removed} results from {sarif_file}")
+              print(f"[Filter] Remaining results: {sum(len(r.get('results',[])) for r in data.get('runs',[]))}")
+
+          PYEOF
+
+      # ══════════════════════════════════════════
+      # STEP 8-2: 필터링된 SARIF 수동 업로드
+      # ══════════════════════════════════════════
+      # [TAG: github/codeql-action/upload-sarif@v4]
+      # - 후처리가 완료된 SARIF를 GitHub Security > Code Scanning에 업로드
+      # - 제외된 Rule ID 결과는 이미 SARIF에서 삭제되었으므로 대시보드에 안 나타남
+      - name: Upload filtered SARIF to Code Scanning
+        uses: github/codeql-action/upload-sarif@v4
+        with:
+          sarif_file: sarif-results
+          category: "/${{ steps.profile.outputs.value }}/language:${{ matrix.language }}"
 
       # ══════════════════════════════════════════
       # STEP 9: 인허가용 HTML 대시보드 생성
