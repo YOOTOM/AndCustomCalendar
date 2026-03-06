@@ -64,6 +64,9 @@ query-filters:
   - exclude:
       id: java/insecure-trustmanager
 
+  - exclude:
+      id: java/diagnostic/database-quality
+      
   # ─── 추가 제외 시 아래에 추가 ───
   # - exclude:
   #     id: java/some-other-rule
