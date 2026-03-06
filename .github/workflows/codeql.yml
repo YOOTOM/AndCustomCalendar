@@ -36,6 +36,10 @@ on:
         description: "internal | approval"
         required: true
         default: "approval"
+        type: choice
+        options:
+          - internal
+          - approval
 
   # [TAG: on.schedule] cron 스케줄 자동 실행
   # - '29 14 * * 2' = 매주 화요일 14:29 UTC (한국시간 23:29)
@@ -89,9 +93,9 @@ jobs:
         include:
           - language: java-kotlin    # 분석 언어 (Java + Kotlin)
             build-mode: manual       # 빌드 방식 (manual: 직접 빌드 명령 실행)
-                                     # - manual: 아래 "Build (Gradle)" 스텝에서 직접 빌드
-                                     # - autobuild: CodeQL이 자동 빌드 시도
-                                     # - none: 빌드 없이 분석 (인터프리터 언어)
+              # - manual: 아래 "Build (Gradle)" 스텝에서 직접 빌드
+              # - autobuild: CodeQL이 자동 빌드 시도
+            # - none: 빌드 없이 분석 (인터프리터 언어)
 
     # ────────────────────────────────────────────
     # [TAG: steps] 실행 단계 (위에서 아래로 순서대로 실행)
@@ -112,7 +116,8 @@ jobs:
       # ══════════════════════════════════════════
       # [TAG: Resolve profile]
       # - 수동 실행(workflow_dispatch)이면 → 사용자가 선택한 profile 사용
-      # - 자동 실행(push/PR/schedule)이면 → 항상 "internal" 사용
+      # - 자동 실행(push/PR/schedule)이면 → 항상 "approval" 사용
+      #   → approval config의 query-filters가 자동 실행에도 실제 적용되도록 변경
       # - 출력값(outputs):
       #   ① steps.profile.outputs.value       = "internal" 또는 "approval"
       #   ② steps.profile.outputs.hide_rule_id = "true" 또는 "false"
@@ -121,16 +126,46 @@ jobs:
         id: profile
         shell: bash
         run: |
+          # [기존 로직 - 자동 실행 시 항상 internal]
+          # if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+          #   echo "value=${{ inputs.profile }}" >> $GITHUB_OUTPUT
+          # else
+          #   echo "value=internal" >> $GITHUB_OUTPUT
+          # fi
+          # if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.profile }}" = "approval" ]; then
+          #   echo "hide_rule_id=true" >> $GITHUB_OUTPUT
+          # else
+          #   echo "hide_rule_id=false" >> $GITHUB_OUTPUT
+          # fi
+
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            echo "value=${{ inputs.profile }}" >> $GITHUB_OUTPUT
+            PROFILE="${{ inputs.profile }}"
           else
-            echo "value=internal" >> $GITHUB_OUTPUT
+            PROFILE="approval"
           fi
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ] && [ "${{ inputs.profile }}" = "approval" ]; then
-            echo "hide_rule_id=true" >> $GITHUB_OUTPUT
+
+          echo "value=$PROFILE" >> "$GITHUB_OUTPUT"
+
+          if [ "$PROFILE" = "approval" ]; then
+            echo "hide_rule_id=true" >> "$GITHUB_OUTPUT"
           else
-            echo "hide_rule_id=false" >> $GITHUB_OUTPUT
+            echo "hide_rule_id=false" >> "$GITHUB_OUTPUT"
           fi
+
+      # ══════════════════════════════════════════
+      # STEP 2-1: 적용 프로파일 디버그 출력
+      # ══════════════════════════════════════════
+      # [TAG: Debug selected profile]
+      # - 어떤 event/profile/config가 실제 적용됐는지 로그에 출력
+      # - approval config가 실제로 로드됐는지 확인할 때 사용
+      - name: Debug selected profile
+        shell: bash
+        run: |
+          echo "event_name=${{ github.event_name }}"
+          echo "ref_name=${{ github.ref_name }}"
+          echo "profile=${{ steps.profile.outputs.value }}"
+          echo "hide_rule_id=${{ steps.profile.outputs.hide_rule_id }}"
+          echo "config_file=./.github/codeql/codeql-config-${{ steps.profile.outputs.value }}.yml"
 
       # ══════════════════════════════════════════
       # STEP 3: JDK 17 설치
@@ -208,12 +243,16 @@ jobs:
       # - 빌드된 코드에 대해 보안/품질 분석 수행
       # - 결과를 SARIF(Static Analysis Results Interchange Format) 형식으로 생성
       # - category: GitHub Security 대시보드에서 결과 구분용 태그
+      #   → profile별 category 분리로 internal / approval 결과가 섞이지 않게 변경
       # - output: SARIF 파일 저장 디렉토리 (이후 스텝에서 활용)
       # - 이 스텝이 완료되면 GitHub Security > Code Scanning에 결과 자동 표시
       - name: Perform CodeQL Analysis
         uses: github/codeql-action/analyze@v4
         with:
-          category: "/language:${{ matrix.language }}"
+          # [기존 category - profile 구분 없음]
+          # category: "/language:${{ matrix.language }}"
+
+          category: "/${{ steps.profile.outputs.value }}/language:${{ matrix.language }}"
           output: sarif-results
 
       # ══════════════════════════════════════════
@@ -301,7 +340,7 @@ jobs:
           # ── severity별 건수 집계 ──
           counts = {}
           for it in items:
-              counts[it["sev"]] = counts.get(it["sev"], 0) + 1
+              counts[it["sev"]] = counts.get(it["sev"] , 0) + 1
 
           def esc(s): return html.escape(s or "")
 
@@ -509,7 +548,8 @@ jobs:
                       rules[rid] = rules.get(rid, 0) + 1
                   for loc in res.get('locations', []):
                       u = loc.get('physicalLocation', {}).get('artifactLocation', {}).get('uri', '')
-                      if u: files[u] = files.get(u, 0) + 1
+                      if u:
+                          files[u] = files.get(u, 0) + 1
                   ri = tr.get(rid, {})
                   for t in ri.get('properties', {}).get('tags', []):
                       if t.startswith('external/cwe/cwe-'):
@@ -562,4 +602,3 @@ jobs:
           else
             echo "No SARIF results found." >> $GITHUB_STEP_SUMMARY
           fi
-
