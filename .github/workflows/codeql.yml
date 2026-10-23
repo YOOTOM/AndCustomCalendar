@@ -7,6 +7,11 @@ on:
     branches: ["master"]
   workflow_dispatch:
     inputs:
+      target_ref:
+        description: "Branch, tag, or full commit SHA"
+        required: true
+        default: "master"
+        type: string
       profile:
         description: "internal | approval"
         required: true
@@ -38,9 +43,37 @@ jobs:
             build-mode: manual
 
     steps:
-      # ── 소스 준비 ──
+      # ── 분석 기준선 결정 및 소스 준비 ──
+      - name: Resolve target reference
+        id: target
+        shell: bash
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_TARGET_REF: ${{ inputs.target_ref }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            TARGET_REF="$INPUT_TARGET_REF"
+          else
+            TARGET_REF="$GITHUB_SHA"
+          fi
+          echo "requested=$TARGET_REF" >> "$GITHUB_OUTPUT"
+          echo "Requested target_ref: $TARGET_REF"
+
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.target.outputs.requested }}
+          fetch-depth: 0
+
+      - name: Record resolved baseline
+        id: baseline
+        shell: bash
+        run: |
+          RESOLVED_SHA="$(git rev-parse HEAD)"
+          echo "sha=$RESOLVED_SHA" >> "$GITHUB_OUTPUT"
+          echo "short_sha=${RESOLVED_SHA:0:8}" >> "$GITHUB_OUTPUT"
+          echo "Requested target_ref: ${{ steps.target.outputs.requested }}"
+          echo "Resolved commit SHA: $RESOLVED_SHA"
 
       # 수동 실행은 입력 profile 사용, 자동 실행은 approval로 고정
       - name: Resolve profile
@@ -218,15 +251,26 @@ jobs:
         shell: bash
         env:
           HIDE_RULE_ID: ${{ steps.profile.outputs.hide_rule_id }}
+          TARGET_REF: ${{ steps.target.outputs.requested }}
+          RESOLVED_SHA: ${{ steps.baseline.outputs.sha }}
+          WORKFLOW_REF: ${{ github.workflow_ref }}
+          WORKFLOW_SHA: ${{ github.workflow_sha }}
+          PROFILE: ${{ steps.profile.outputs.value }}
         run: |
           echo "## CodeQL Analysis Report" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
           echo "| Item | Value |" >> $GITHUB_STEP_SUMMARY
           echo "|------|-------|" >> $GITHUB_STEP_SUMMARY
+          echo "| Repository | ${GITHUB_REPOSITORY} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Run ID | ${GITHUB_RUN_ID} |" >> $GITHUB_STEP_SUMMARY
+          echo "| Event | ${GITHUB_EVENT_NAME} |" >> $GITHUB_STEP_SUMMARY
           echo "| Language | ${{ matrix.language }} |" >> $GITHUB_STEP_SUMMARY
           echo "| Query Pack | security-and-quality |" >> $GITHUB_STEP_SUMMARY
-          echo "| Branch | ${GITHUB_REF_NAME} |" >> $GITHUB_STEP_SUMMARY
-          echo "| Commit | ${GITHUB_SHA::8} |" >> $GITHUB_STEP_SUMMARY
+          printf "| Profile | %s |\n" "$PROFILE" >> $GITHUB_STEP_SUMMARY
+          printf "| Target ref | %s |\n" "$TARGET_REF" >> $GITHUB_STEP_SUMMARY
+          printf "| Resolved Commit SHA | %s |\n" "$RESOLVED_SHA" >> $GITHUB_STEP_SUMMARY
+          printf "| Workflow ref | %s |\n" "$WORKFLOW_REF" >> $GITHUB_STEP_SUMMARY
+          printf "| Workflow Revision | %s |\n" "$WORKFLOW_SHA" >> $GITHUB_STEP_SUMMARY
           echo "" >> $GITHUB_STEP_SUMMARY
 
           SARIF_FILE=$(find sarif-results -name "*.sarif" -type f 2>/dev/null | head -1)
