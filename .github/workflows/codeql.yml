@@ -76,7 +76,7 @@ jobs:
           cache: gradle
 
       - name: Set up Android SDK
-        uses: android-actions/setup-android@v3
+        uses: android-actions/setup-android@v4
 
       # 프로젝트 compileSdk에 맞는 Android 플랫폼 설치
       - name: Install Android SDK components
